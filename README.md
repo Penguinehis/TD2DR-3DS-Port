@@ -1,11 +1,6 @@
 # Sonic.exe The Disaster 2D Remake — 3DS
 
 Port made by **PenguinEhis**.
-
-Homebrew port of the GameMaker project in `../disaster2d-oss-main`. It plays online on the same
-servers as the PC game (the protocol is identical). See `PLAN.md` for the roadmap and design
-notes.
-
 ## Build
 
 Needs Python 3 with Pillow (`pip install Pillow`) and Docker Desktop. No devkitPro install is
@@ -86,10 +81,3 @@ The game reads `sdmc:/sonic3ds.cfg` (in Azahar: `<user dir>\sdmc\sonic3ds.cfg`):
 | `n<name>;` | nickname |
 | `x` | auto-play the online menus (ready, vote, first free character) |
 | `A<N>` `B<N>` | press A / B at frame N |
-
-It writes a log to `sdmc:/sonic3ds.log`. `python tools/emu_shot.py <sdmc dir> out.png` turns
-the screen dumps into one PNG. Errors are shown on the top screen (not the system error
-applet, which hangs in emulators without system files).
-
-For online tests without a second console, `tools/netbot/bot.c` is a headless client that
-joins, readies, votes, picks a character and walks around (see PLAN.md, "Testing online").
