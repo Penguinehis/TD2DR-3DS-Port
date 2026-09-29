@@ -12,9 +12,3 @@ source/gen/
 ref/
 __pycache__/
 *.cia
-tools/emu_shot.py
-tools/export_audio.py
-tools/export_rooms.py
-tools/export_sprites.py
-tools/export_tables.py
-tools/gmproject.py
