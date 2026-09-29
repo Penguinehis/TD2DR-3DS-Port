@@ -690,6 +690,36 @@ void game_init(void)
 
 bool game_active(void) { return g.active; }
 
+// Everything a fight needs is read before the match starts: loading it on first use (the
+// first stun, the first hit) would stall the game on the SD card.
+static void preload_match(void)
+{
+    static const int SOUNDS[] = { SND_HURT, SND_RINGLOSE, SND_DEAD, SND_EXE_STUN, SND_ELECTROSHOCK, SND_BUBLE,
+                                  SND_SPIKE, SND_RING, SND_HEAL, SND_REDRING, SND_TELEPORT, SND_SPRING };
+    for (unsigned i = 0; i < sizeof SOUNDS / sizeof *SOUNDS; i++) audio_preload(SOUNDS[i]);
+    bool chars[7] = { false };
+    int exe = -1;
+    if (level.has_player) {
+        chars[level.player.character] = true;
+        if (level.player.character == CHARACTER_EXE) exe = level.player.exe_character;
+    }
+    for (int i = 0; i < NET_MAX_PLAYERS; i++) {
+        const NetPlayer *np = &net.players[i];
+        if (!np->used || np->character < 0 || np->character > 6) continue;
+        chars[np->character] = true;
+        if (np->id == net.exe_id && np->exe_character >= 0) exe = np->exe_character;
+    }
+    if (exe < 0) exe = 0;
+    for (int c = 1; c < 7; c++) {
+        if (!chars[c]) continue;
+        for (int k = 5; k <= 6; k++) {  // hurt, dead / stun
+            sprite_preload(ANIMS_SURVIVOR[c][k]);
+            sprite_preload(ANIMS_DEMON[c][k]);
+        }
+    }
+    for (int k = 0; k < 50; k++) sprite_preload(ANIMS_EXE[exe & 3][k]);
+}
+
 void game_begin(void)
 {
     memset(&g, 0, sizeof g);
@@ -713,6 +743,7 @@ void game_begin(void)
     RoomInstance *sp = n ? room_instance_find(&level.room, spawn_obj, rand() % n) : NULL;
     if (sp) level_spawn(is_exe() ? CHARACTER_EXE : net.my_character, net.my_exe_character, sp->x, sp->y - 18);
     level.player.hp = 100;
+    preload_match();
 
     for (int i = 0; i < NET_MAX_PLAYERS; i++) {
         const NetPlayer *np = &net.players[i];
@@ -1231,7 +1262,7 @@ void game_update(u32 held, u32 down)
         if (p->alarm_inactive > 0) p->alarm_inactive--;
         puppet_contact(p);
         puppet_revive_heal(p);
-        if (dbg_flag('x') && g.frame % 60 == 0)
+        if (dbg_flag('V') && g.frame % 60 == 0)
             dbg_log("game: puppet %u at %.0f,%.0f state %d atk %d spr %d | me %.0f,%.0f hp %d", p->id, p->x, p->y,
                     p->state, p->attacking, puppet_sprite(p), me->x, me->y, me->hp);
     }

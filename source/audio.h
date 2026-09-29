@@ -15,6 +15,7 @@ void audio_exit(void);
 // One-shot effect (or a looping one). Returns a handle for audio_stop / audio_is_playing
 // (-1 if nothing played). Music ids passed here are started as music.
 int audio_play(int snd);
+void audio_preload(int snd);           // read an effect now (match start), not on first use
 int audio_play_ex(int snd, float gain, bool loop);
 void audio_stop(int handle);
 void audio_set_gain(int handle, float gain);  // audio_sound_gain on a playing instance

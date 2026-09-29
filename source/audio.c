@@ -1,6 +1,9 @@
 #include "audio.h"
 
 #include <math.h>
+
+#include "loader.h"
+#include "sprite.h"
 #include <tremor/ivorbisfile.h>
 
 // NDSP channel 0 streams music; 1..23 play effects.
@@ -21,6 +24,7 @@ typedef struct {
     s16 *data;       // linear memory
     u32 samples, rate;
     u32 last_used;
+    bool missing;
 } SfxSample;
 
 static SfxSample samples[SND_COUNT];
@@ -56,34 +60,67 @@ static void evict_for(u32 need)
     }
 }
 
-static SfxSample *load_sample(int snd)
+// "PCM1" u32 rate u32 samples, s16 mono samples. In play the file is read in the background
+// (the sound is skipped until it is in memory); at level start and for preloads, at once.
+static SfxSample *load_sample(int snd, bool wait)
 {
     SfxSample *s = &samples[snd];
     s->last_used = ++use_clock;
     if (s->data) return s;
+    if (s->missing) return NULL;
     char path[128];
     snprintf(path, sizeof path, "romfs:/audio/sfx/%s.pcm", SOUND_DEFS[snd].name);
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    char magic[4];
+    void *file = NULL;
+    size_t size = 0;
+    int r;
+    if (wait || sprites_loading()) {
+        r = LOADER_MISSING;
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long n = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            file = n > 0 ? malloc(n) : NULL;
+            r = file && fread(file, 1, n, f) == (size_t)n ? LOADER_READY : LOADER_FAILED;
+            size = n;
+            fclose(f);
+        }
+    } else {
+        r = loader_fetch(path, &file, &size);
+    }
+    if (r == LOADER_MISSING) s->missing = true;
+    if (r != LOADER_READY) {
+        if (r != LOADER_PENDING) free(file);
+        return NULL;
+    }
+    const u8 *p = file;
     u32 head[2];
-    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "PCM1", 4) || fread(head, 4, 2, f) != 2) {
-        fclose(f);
+    if (size < 12 || memcmp(p, "PCM1", 4)) {
+        free(file);
+        s->missing = true;
         return NULL;
     }
-    evict_for(head[1] * 2);
-    s->data = linearAlloc(head[1] * 2 > 0 ? head[1] * 2 : 2);
+    memcpy(head, p + 4, 8);
+    u32 bytes = head[1] * 2;
+    if (bytes > size - 12) bytes = (u32)(size - 12) & ~1u;
+    evict_for(bytes);
+    s->data = linearAlloc(bytes > 0 ? bytes : 2);
     if (!s->data) {
-        fclose(f);
+        free(file);
         return NULL;
     }
-    s->samples = head[1];
+    memcpy(s->data, p + 12, bytes);
+    free(file);
+    s->samples = bytes / 2;
     s->rate = head[0];
-    if (fread(s->data, 2, s->samples, f) != s->samples) memset(s->data, 0, s->samples * 2);
-    fclose(f);
-    DSP_FlushDataCache(s->data, s->samples * 2);
-    cache_bytes += s->samples * 2;
+    DSP_FlushDataCache(s->data, bytes);
+    cache_bytes += bytes;
     return s;
+}
+
+void audio_preload(int snd)
+{
+    if (ndsp_ok && snd >= 0 && snd < SND_COUNT && SOUND_DEFS[snd].kind == 1) load_sample(snd, true);
 }
 
 int audio_play_ex(int snd, float gain, bool loop)
@@ -94,7 +131,7 @@ int audio_play_ex(int snd, float gain, bool loop)
         return -1;
     }
     if (SOUND_DEFS[snd].kind != 1) return -1;
-    SfxSample *s = load_sample(snd);
+    SfxSample *s = load_sample(snd, false);
     if (!s || !s->samples) return -1;
 
     int ch = -1;
@@ -168,6 +205,8 @@ static bool music_open;
 static int music_snd = -1;
 static float music_gain = 1;
 static float music_fade = 1;            // crossfade factor (audio_music_request)
+static int music_req = -1;              // track to open on the music thread
+static ogg_int64_t music_req_pos;
 
 static void music_close_locked(void)
 {
@@ -201,12 +240,19 @@ static bool music_fill(ndspWaveBuf *wb)
     return true;
 }
 
+static void music_open_locked(int snd, ogg_int64_t pos);
+
 static void music_worker(void *arg)
 {
     (void)arg;
     while (!music_quit) {
         LightEvent_Wait(&music_event);
         LightLock_Lock(&music_lock);
+        if (music_req >= 0) {
+            int snd = music_req;
+            music_req = -1;
+            music_open_locked(snd, music_req_pos);
+        }
         if (music_open) {
             for (int i = 0; i < MUSIC_BUFS; i++) {
                 ndspWaveBuf *wb = &music_bufs[i];
@@ -239,11 +285,24 @@ static void music_start(int snd, ogg_int64_t pos);
 
 void audio_music(int snd) { music_start(snd, 0); }
 
+// A track change is only a request here; the music thread opens the file and decodes the
+// first buffers (a blocking read would freeze the game on hardware).
 static void music_start(int snd, ogg_int64_t pos)
 {
     if (!ndsp_ok || snd < 0 || snd >= SND_COUNT || SOUND_DEFS[snd].kind != 2) return;
     LightLock_Lock(&music_lock);
     music_close_locked();
+    music_req = snd;
+    music_req_pos = pos;
+    music_snd = snd;
+    music_gain = 1;
+    LightLock_Unlock(&music_lock);
+    LightEvent_Signal(&music_event);
+}
+
+// music thread, lock held
+static void music_open_locked(int snd, ogg_int64_t pos)
+{
     char path[128];
     snprintf(path, sizeof path, "romfs:/audio/music/%s.ogg", SOUND_DEFS[snd].name);
     FILE *f = fopen(path, "rb");
@@ -259,7 +318,6 @@ static void music_start(int snd, ogg_int64_t pos)
             ogg_int64_t len = ov_pcm_total(&music_vf, -1);
             if (len > 0) ov_pcm_seek(&music_vf, pos % len);
         }
-        music_gain = 1;
         music_apply_gain();
         for (int i = 0; i < MUSIC_BUFS; i++) {
             memset(&music_bufs[i], 0, sizeof music_bufs[i]);
@@ -268,9 +326,9 @@ static void music_start(int snd, ogg_int64_t pos)
         }
     } else {
         if (f) fclose(f);
+        music_snd = snd;  // stays "current": not asked for again every frame
         dbg_log("audio: cannot open %s", path);
     }
-    LightLock_Unlock(&music_lock);
 }
 
 void audio_music_stop(void)
@@ -278,6 +336,7 @@ void audio_music_stop(void)
     if (!ndsp_ok) return;
     LightLock_Lock(&music_lock);
     music_close_locked();
+    music_req = -1;
     LightLock_Unlock(&music_lock);
 }
 

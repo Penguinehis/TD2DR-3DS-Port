@@ -42,6 +42,8 @@ void level_load(int id, int spawn_character)
     player_controls_lock = player_swap_dirs = false;
     player_room_id = id;
     level.pet_hidden = false;
+    sprites_flush();        // the previous level's sheets (C2D has flushed: nothing queued uses them)
+    sprites_sync_load(20);  // the first frames of a level load their sheets at once
     my_pet = (Pet){ -1000, -1000, 0 };
     mapobj_room_start(room);
     world_build(room);
@@ -194,10 +196,8 @@ static bool on_screen(int spr, float x, float y, float xs, float ys)
     return x + reach >= 0 && y + reach >= 0 && x - reach <= level.view_w && y - reach <= level.view_h;
 }
 
-static void draw_background(const RoomLayer *l)
+static void bg_pos(const RoomLayer *l, float *x, float *y)
 {
-    const SpriteInfo *s = sprite_info(l->bg_sprite);
-    if (!s || !settings.gfx_backgrounds) return;
     float lx = l->bg_x, ly = l->bg_y;
     if (l->parallax && !l->manual_pos) {
         if (settings.gfx_parallax) {
@@ -210,6 +210,27 @@ static void draw_background(const RoomLayer *l)
     }
     lx += level.time * l->hspeed;
     ly += level.time * l->vspeed;
+    *x = lx;
+    *y = ly;
+}
+
+// An opaque background filling the view hides every layer behind it (skipped: fill rate is
+// what limits Old 3DS with many parallax layers)
+static bool bg_covers(const RoomLayer *l)
+{
+    if (!l->visible || l->stretch || (l->bg_colour >> 24) != 0xFF || !sprite_info(l->bg_sprite)) return false;
+    float lx, ly;
+    bg_pos(l, &lx, &ly);
+    return sprite_tiled_covers(l->bg_sprite, anim_frame(l->bg_sprite, 0, 1), lx - level.cam_x, ly - level.cam_y,
+                               l->htiled, l->vtiled, level.view_w, level.view_h);
+}
+
+static void draw_background(const RoomLayer *l)
+{
+    const SpriteInfo *s = sprite_info(l->bg_sprite);
+    if (!s || !settings.gfx_backgrounds) return;
+    float lx, ly;
+    bg_pos(l, &lx, &ly);
     float frame = anim_frame(l->bg_sprite, 0, 1);
     if (l->stretch) {
         sprite_draw(l->bg_sprite, frame, lx - level.cam_x + s->xorigin, ly - level.cam_y + s->yorigin,
@@ -305,6 +326,13 @@ void level_draw(void)
     const Room *room = &level.room;
     bool player_drawn = false;
     int until = INT_MAX;  // placed instances with a changed depth: those deeper than this are drawn
+    int first = 0;        // layers behind the frontmost covering background are not drawn
+    if (settings.gfx_backgrounds && !dbg_flag('b'))
+        for (int i = room->layer_count - 1; i > 0; i--)
+            if (room->layers[i].type == LAYER_BACKGROUND && bg_covers(&room->layers[i])) {
+                first = i;
+                break;
+            }
     for (int i = 0; i < room->layer_count; i++) {
         const RoomLayer *l = &room->layers[i];
         // The player object lives at depth 0; layers are sorted deepest first.
@@ -320,6 +348,7 @@ void level_draw(void)
             mapobj_draw_moved(l->depth, until);
             until = l->depth;
         }
+        if (i < first && !level.show_hidden) continue;
         if (!l->visible && !(level.show_hidden && l->type == LAYER_INSTANCES)) continue;
         switch (l->type) {
         case LAYER_BACKGROUND: if (!dbg_flag('b')) draw_background(l); break;

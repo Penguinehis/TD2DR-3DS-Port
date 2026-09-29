@@ -13,6 +13,7 @@
 #include "common.h"
 #include "game.h"
 #include "level.h"
+#include "loader.h"
 #include "maps/maps.h"
 #include "levels.h"
 #include "mapobj.h"
@@ -43,18 +44,40 @@ void *read_file(const char *path, size_t *size_out)
 }
 
 // Append a line to sdmc:/sonic3ds.log (in Azahar: %APPDATA%\Azahar\sdmc\sonic3ds.log).
-void dbg_log(const char *fmt, ...)
+// Only in debug mode (sdmc:/sonic3ds.cfg present): every line is a blocking SD card write,
+// which freezes the game for a moment on real hardware.
+static bool log_enabled;
+
+// Lines are collected in memory and written in one go (dbg_flush) so the timings measured in
+// debug mode are not dominated by the log itself.
+static char log_buf[16384];
+static size_t log_len;
+
+void dbg_flush(void)
 {
+    if (!log_len) return;
     static bool first = true;
     FILE *f = fopen("sdmc:/sonic3ds.log", first ? "w" : "a");
     first = false;
-    if (!f) return;
+    if (f) {
+        fwrite(log_buf, 1, log_len, f);
+        fclose(f);
+    }
+    log_len = 0;
+}
+
+void dbg_log(const char *fmt, ...)
+{
+    if (!log_enabled) return;
+    if (log_len > sizeof log_buf - 512) dbg_flush();
+    size_t room = sizeof log_buf - log_len - 1;
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
+    int n = vsnprintf(log_buf + log_len, room, fmt, ap);
     va_end(ap);
-    fputc('\n', f);
-    fclose(f);
+    if (n < 0) return;
+    log_len += (size_t)n < room ? (size_t)n : room - 1;
+    log_buf[log_len++] = '\n';
 }
 
 static bool c2d_ready;
@@ -144,6 +167,7 @@ void fatal(const char *fmt, ...)
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
     dbg_log("FATAL: %s", msg);
+    dbg_flush();
     if (c2d_ready) {
         C2D_Fini();
         C3D_Fini();
@@ -273,6 +297,7 @@ int main(void)
         size_t n;
         char *cfg = read_file("sdmc:/sonic3ds.cfg", &n);
         if (cfg) {
+            log_enabled = true;
             snprintf(dbg_raw, sizeof dbg_raw, "%.*s", (int)n, cfg);
             free(cfg);
             dbg_parse(dbg_raw);
@@ -289,6 +314,7 @@ int main(void)
     settings_load();
     achiev_init();
     dbg_str('n', settings.nickname, sizeof settings.nickname);
+    loader_init();
     audio_init();
     audio_apply_volume(settings.music_volume, settings.sfx_volume);
     if (!net_init()) dbg_log("net_init failed: online play unavailable");
@@ -385,9 +411,16 @@ int main(void)
         }
         C3D_FrameEnd(0);
         prof_add(&prof_gpu, C3D_GetDrawingTime());
+        static float worst;
+        float frame_ms = tick_ms(svcGetSystemTick() - t_upd);
+        if (frame_ms > worst) worst = frame_ms;
         if ((dbg_flag('d') || dbg_flag('P')) && frame_no % 120 == 0)
-            dbg_log("perf upd %.2f top %.2f bot %.2f gpu %.2f quads %d tex %d", prof_update, prof_top, prof_bottom,
-                    prof_gpu, sprite_stat_quads, sprite_stat_switches);
+        {
+            dbg_log("perf upd %.2f top %.2f bot %.2f gpu %.2f quads %d tex %d worst %.1f", prof_update, prof_top,
+                    prof_bottom, prof_gpu, sprite_stat_quads, sprite_stat_switches, worst);
+            worst = 0;
+        }
+        if (frame_no % 120 == 0) dbg_flush();
         if (dbg_flag('p') && frame_no == (u32)dbg_num('p', 120)) {
             save_screen(GFX_TOP, "sdmc:/sonic3ds_top.ppm");
             save_screen(GFX_BOTTOM, "sdmc:/sonic3ds_bottom.ppm");
@@ -403,6 +436,8 @@ int main(void)
 
     net_exit();
     audio_exit();
+    loader_exit();
+    dbg_flush();
     level_unload();
     sprites_exit();
     ui_exit();

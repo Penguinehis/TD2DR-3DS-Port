@@ -39,6 +39,7 @@ FORCE_NORMAL = {"spr_screenoverlay", "spr_screenoverlay2", "spr_hidegui", "spr_a
 MODE_UNUSED, MODE_MASK, MODE_TILEMAP, MODE_NORMAL = 0, 1, 2, 3
 KIND_PRECISE, KIND_PRECISE_PER_FRAME = 0, 4
 FLIP_H, FLIP_V = 1 << 30, 1 << 31
+OPAQUE = 1 << 29  # the tile has no transparent pixel (layers behind it can be skipped)
 EMPTY_CELL = 0xFFFFFFFF
 
 
@@ -174,12 +175,14 @@ class Tileset:
         self.lookup = {}  # bytes of any orientation -> cell value
 
     def cell(self, tile):
-        if tile.getchannel("A").getbbox() is None:
+        alpha = tile.getchannel("A")
+        if alpha.getbbox() is None:
             return EMPTY_CELL
+        opaque = OPAQUE if alpha.getextrema()[0] == 255 else 0
         key = tile.tobytes()
         hit = self.lookup.get(key)
         if hit is not None:
-            return hit
+            return hit | opaque
         idx = len(self.tiles)
         self.tiles.append(tile)
         variants = (
@@ -190,7 +193,7 @@ class Tileset:
         )
         for img, flags in variants:
             self.lookup.setdefault(img.tobytes(), idx | flags)
-        return idx
+        return idx | opaque
 
     def sheets(self):
         for start in range(0, len(self.tiles), TILES_PER_SHEET):
@@ -321,6 +324,8 @@ def main():
             for i, img in enumerate(imgs):
                 fmt, img = sheet_format(img)
                 img.save(os.path.join(gfx_dir, f"{prefix}{i}.png"), compress_level=1)
+                # compressed (small files, quick card reads); source/loader.c decompresses sheets on
+                # its thread so the game thread only copies them
                 write_if_changed(os.path.join(gfx_dir, f"{prefix}{i}.t3s"), f"-f {fmt} -z auto\n{prefix}{i}.png\n")
                 size += img.size[0] * img.size[1] * 2
         group_hdr += struct.pack("<32sBB", base.encode()[:31], len(sprite_imgs), len(tile_imgs))

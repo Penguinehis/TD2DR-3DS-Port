@@ -37,6 +37,7 @@ void main_draw_perf(float x, float y);
 
 // Debug switches from sdmc:/sonic3ds.cfg (see main.c).
 bool dbg_flag(char c);
+void dbg_flush(void);  // write the buffered log lines
 int dbg_num(char c, int def);
 // Text after the letter up to ';' (e.g. "c192.168.1.5:8606;"). Returns false if absent.
 bool dbg_str(char c, char *out, size_t size);

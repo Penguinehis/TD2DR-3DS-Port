@@ -37,11 +37,19 @@ void sprite_draw(int spr, float frame, float x, float y, float xscale, float ysc
 void sprite_set_exact_tint(bool exact);
 
 // Draw a sprite repeated to cover a rectangle (background layers). Camera space.
+// True when sprite_draw_tiled with these arguments covers the whole view with opaque pixels
+bool sprite_tiled_covers(int spr, float frame, float x, float y, bool htile, bool vtile, float view_w, float view_h);
 void sprite_draw_tiled(int spr, float frame, float x, float y, bool htile, bool vtile,
                        float view_w, float view_h, u32 colour);
 
 // Start a new frame for the texture cache (sheets used this frame are never evicted).
 void sprites_frame_begin(void);
+// Load texture sheets synchronously for the next frames (level start); otherwise sheets needed
+// in play are read in the background and appear a frame or two late.
+void sprites_sync_load(int frames);
+bool sprites_loading(void);  // inside that level-start window
+void sprite_preload(int spr);
+void sprites_flush(void);  // free every loaded sheet (a new level: the old one's art is not needed)  // load a sprite's sheets now (in the level-start window: at once)
 // The scene being drawn (after C2D_SceneBegin): 400x240 top, 320x240 bottom
 void sprites_scene(float w, float h);
 // Per-frame draw statistics (quads drawn, texture changes) of the previous frame

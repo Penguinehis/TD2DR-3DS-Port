@@ -264,9 +264,13 @@ static void auto_play(void)
     static u32 wait;
     if (++wait < 90) return;
     switch (net.state) {
-    case NET_LOBBY:
+    case NET_LOBBY: {
+        // E: ask to be the EXE (operator chat trigger; local clients are operators)
+        static bool asked;
+        if (dbg_flag('E') && !asked) { net_send_chat("i want big burgr"); asked = true; wait = 0; break; }
         if (net.lobby_ready && !net.my_ready) { net_set_ready(true); wait = 0; }
         break;
+    }
     case NET_VOTE:
         if (net.my_vote < 0) { net_vote(0); wait = 0; }
         break;

@@ -12,9 +12,11 @@
 
 #include <math.h>
 
+#include "loader.h"
 #include "tile_shbin.h"
 
 static void tiles_init(void);
+static int sync_frames = 30;  // sheets load synchronously (level start), else in the background
 static int tb_used;  // tiles written to the batcher's buffer this frame
 
 #define TILE 16
@@ -23,7 +25,8 @@ static int tb_used;  // tiles written to the batcher's buffer this frame
 #define CELL_EMPTY 0xFFFFFFFFu
 #define CELL_FLIP_H (1u << 30)
 #define CELL_FLIP_V (1u << 31)
-#define CELL_INDEX(c) ((c) & 0x3FFFFFFFu)
+#define CELL_OPAQUE (1u << 29)  // no transparent pixel
+#define CELL_INDEX(c) ((c) & 0x1FFFFFFFu)
 
 // Keep this much linear memory free for citro2d buffers and one incoming sheet.
 #define LINEAR_RESERVE (2u * 1024 * 1024)
@@ -183,6 +186,7 @@ void sprites_frame_begin(void)
     stat_quads = stat_switches = 0;
     stat_last_tex = NULL;
     tb_used = 0;
+    if (sync_frames > 0) sync_frames--;
 }
 
 static bool evict_one(void)
@@ -215,22 +219,72 @@ static C3D_Tex *sheet_get(int group, bool tiles, int index)
 
     char path[64];
     snprintf(path, sizeof path, "romfs:/gfx/%s_%s%d.t3x", g->name, tiles ? "t" : "", index);
-    s->sheet = C2D_SpriteSheetLoad(path);
-    // Out of linear memory: free older sheets until it fits (a sprite must never vanish
-    // just because the level art filled the memory first).
-    while (!s->sheet && evict_one()) s->sheet = C2D_SpriteSheetLoad(path);
-    if (!s->sheet) {
-        FILE *f = fopen(path, "rb");
-        if (f) fclose(f);
-        else s->missing = true;  // only a file that does not exist is given up on
-        dbg_log("sheet %s: %s", path, f ? "no memory" : "missing");
-        return NULL;
+    if (sync_frames > 0) {
+        s->sheet = C2D_SpriteSheetLoad(path);
+        // Out of linear memory: free older sheets until it fits (a sprite must never vanish
+        // just because the level art filled the memory first).
+        while (!s->sheet && evict_one()) s->sheet = C2D_SpriteSheetLoad(path);
+        if (!s->sheet) {
+            FILE *f = fopen(path, "rb");
+            if (f) fclose(f);
+            else s->missing = true;  // only a file that does not exist is given up on
+            dbg_log("sheet %s: %s", path, f ? "no memory" : "missing");
+            return NULL;
+        }
+    } else {
+        // In play: read in the background (a blocking read freezes the game on hardware);
+        // the sprite shows a frame or two later.
+        // at most one sheet a frame is copied into texture memory (~8 ms each)
+        static u32 last_made;
+        if (last_made == frame_counter) return NULL;
+        void *data;
+        size_t size;
+        int r = loader_fetch(path, &data, &size);
+        if (r == LOADER_READY) last_made = frame_counter;
+        if (r == LOADER_MISSING) s->missing = true;
+        if (r != LOADER_READY) return NULL;
+        u64 t0 = svcGetSystemTick();
+        const u8 *hd = data;
+        size_t head = 5 + 12 * (size_t)(hd[0] | hd[1] << 8);
+        s->sheet = C2D_SpriteSheetLoadFromMem(data, size);
+        dbg_log("async sheet %s: %u bytes, stream type %02x, %.2f ms", path, (unsigned)size, head < size ? hd[head] : 0xFF,
+                (svcGetSystemTick() - t0) / (float)CPU_TICKS_PER_MSEC);
+        while (!s->sheet && evict_one()) s->sheet = C2D_SpriteSheetLoadFromMem(data, size);
+        free(data);
+        if (!s->sheet) {
+            dbg_log("sheet %s: no memory", path);
+            return NULL;
+        }
     }
     C2D_Image img = C2D_SpriteSheetGetImage(s->sheet, 0);
     s->tex = img.tex;
     C3D_TexSetFilter(s->tex, GPU_NEAREST, GPU_NEAREST);
     return s->tex;
 }
+
+void sprites_sync_load(int frames) { sync_frames = frames; }
+
+void sprites_flush(void)
+{
+    for (int i = 0; i < all_sheet_count; i++) {
+        Sheet *s = all_sheets[i];
+        if (!s->sheet) continue;
+        C2D_SpriteSheetFree(s->sheet);
+        s->sheet = NULL;
+        s->tex = NULL;
+    }
+}
+
+void sprite_preload(int spr)
+{
+    const SpriteInfo *s = sprite_info(spr);
+    if (!s || s->mode != SPRITE_NORMAL) return;
+    for (int f = 0; f < s->frame_count; f++) {
+        const FrameRec *fr = &frames[s->first_frame + f];
+        for (u32 i = 0; i < fr->count; i++) sheet_get(s->group, false, pieces[fr->first + i].sheet);
+    }
+}
+bool sprites_loading(void) { return sync_frames > 0; }
 
 void sprites_preload_group(int group)
 {
@@ -504,6 +558,38 @@ void sprite_draw(int spr, float frame, float x, float y, float xscale, float ysc
         draw_rect(tex, pc->x, pc->y, pc->w, pc->h, x, y,
                   s->xorigin - pc->dx, s->yorigin - pc->dy, xscale, yscale, angle, colour, alpha);
     }
+}
+
+bool sprite_tiled_covers(int spr, float frame, float x, float y, bool htile, bool vtile, float view_w, float view_h)
+{
+    const SpriteInfo *s = sprite_info(spr);
+    if (!s || s->mode != SPRITE_TILEMAP || s->width == 0 || s->height == 0) return false;
+    int fi = frame_index(s, frame);
+    if (fi < 0) return false;
+    const MapRec *m = &maps[frames[fi].first];
+    float w = s->width, h = s->height, cw = m->cols * TILE, ch = m->rows * TILE;
+    // every repeat must be solid edge to edge, a single copy must span the view
+    if (htile ? (m->x0 != 0 || cw < w) : (x + m->x0 > 0 || x + m->x0 + cw < view_w)) return false;
+    if (vtile ? (m->y0 != 0 || ch < h) : (y + m->y0 > 0 || y + m->y0 + ch < view_h)) return false;
+    float x0 = x, y0 = y;
+    if (htile) { x0 = fmodf(x, w); if (x0 > 0) x0 -= w; }
+    if (vtile) { y0 = fmodf(y, h); if (y0 > 0) y0 -= h; }
+    for (float yy = y0; yy < (vtile ? view_h : y0 + 1); yy += h)
+        for (float xx = x0; xx < (htile ? view_w : x0 + 1); xx += w) {
+            float left = xx + m->x0, top = yy + m->y0;
+            int c0 = (int)floorf(-left / TILE), c1 = (int)ceilf((view_w - left) / TILE);
+            int r0 = (int)floorf(-top / TILE), r1 = (int)ceilf((view_h - top) / TILE);
+            if (c0 < 0) c0 = 0;
+            if (r0 < 0) r0 = 0;
+            if (c1 > m->cols) c1 = m->cols;
+            if (r1 > m->rows) r1 = m->rows;
+            for (int r = r0; r < r1; r++) {
+                const u32 *row = cells + m->first_cell + (u32)r * m->cols;
+                for (int c = c0; c < c1; c++)
+                    if (row[c] == CELL_EMPTY || !(row[c] & CELL_OPAQUE)) return false;
+            }
+        }
+    return true;
 }
 
 void sprite_draw_tiled(int spr, float frame, float x, float y, bool htile, bool vtile,

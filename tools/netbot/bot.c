@@ -183,7 +183,8 @@ int main(int argc, char **argv)
             w8(&p, 1); w16(&p, 0); w8(&p, (uint8_t)(tick / 8)); w8(&p, xspd < 0 ? (uint8_t)-1 : 1);
             // as the EXE, attack for 1 s every 4 s
             if (exe_id == my_id) w8(&p, (tick % 240) < 60 ? (1 << 4) : 0);
-            else { w8(&p, 3); w8(&p, 0); w16(&p, 0); w8(&p, 0); }
+            // as a survivor (Knuckles): full hp, attacking 1 s every 4 s (stuns the EXE on contact)
+            else { w8(&p, 100); w8(&p, 0); w16(&p, 0); w8(&p, (tick % 240) < 60 ? (1 << 4) : 0); }
             send_pk(&p, 0);
             if (tick % 60 == 0) { begin(&p, CLIENT_PING); send_pk(&p, 0); }
         }
