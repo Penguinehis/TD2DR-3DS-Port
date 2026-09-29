@@ -1,0 +1,14 @@
+# generated
+build/
+romfs/gfx/
+*.3dsx
+*.elf
+*.smdh
+*.map
+gfx/*.png
+gfx/*.t3s
+romfs/data/
+source/gen/
+ref/
+__pycache__/
+*.cia
