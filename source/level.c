@@ -39,6 +39,7 @@ void level_load(int id, int spawn_character)
     level.cam_x = level.cam_y = 0;
     level.cam_dist = 0;
     level.cam_look_timer = 0;
+    level.cam_lead = 0;
     player_controls_lock = player_swap_dirs = false;
     player_room_id = id;
     level.pet_hidden = false;
@@ -93,14 +94,16 @@ Keys level_keys(u32 held, u32 down)
         if (d & KEY_UP) down |= KEY_DOWN;
         if (d & KEY_DOWN) down |= KEY_UP;
     }
-    // KEY_LEFT etc. combine the D-Pad and the Circle Pad.
+    // KEY_LEFT etc. combine the D-Pad and the Circle Pad; the buttons follow settings.bind.
+    const u32 *b = settings.bind;
     Keys k = {
         .left = held & KEY_LEFT, .right = held & KEY_RIGHT, .up = held & KEY_UP, .down = held & KEY_DOWN,
-        .a = held & KEY_A, .b = held & KEY_B, .c = held & KEY_Y,
+        .a = held & b[BIND_JUMP], .b = held & b[BIND_SPECIAL], .c = held & b[BIND_ABILITY],
         .left_p = down & KEY_LEFT, .right_p = down & KEY_RIGHT, .up_p = down & KEY_UP,
-        .down_p = down & KEY_DOWN, .a_p = down & KEY_A, .b_p = down & KEY_B, .c_p = down & KEY_Y,
-        .em1 = held & KEY_L, .em2 = held & KEY_R, .em3 = held & (KEY_ZL | KEY_ZR),
-        .em1_p = down & KEY_L, .em2_p = down & KEY_R, .em3_p = down & (KEY_ZL | KEY_ZR),
+        .down_p = down & KEY_DOWN, .a_p = down & b[BIND_JUMP], .b_p = down & b[BIND_SPECIAL],
+        .c_p = down & b[BIND_ABILITY],
+        .em1 = held & b[BIND_EMOTE1], .em2 = held & b[BIND_EMOTE2], .em3 = held & b[BIND_EMOTE3],
+        .em1_p = down & b[BIND_EMOTE1], .em2_p = down & b[BIND_EMOTE2], .em3_p = down & b[BIND_EMOTE3],
     };
     return k;
 }
@@ -134,6 +137,12 @@ static void camera_follow(void)
     if (level.cam_look_timer == 0)
         for (int i = 0; i < 2 && level.cam_dist != 0; i++)
             level.cam_dist -= (level.cam_dist > 0) - (level.cam_dist < 0);
+    // 3DS: the screen is narrower than the PC view, so the camera leads 25% of its width in
+    // the facing direction, easing over when the player turns
+    float lead = settings.cam_lookahead ? p->image_xscale * TOP_W * 0.25f : 0;
+    level.cam_lead += (lead - level.cam_lead) * 0.04f;
+    if (fabsf(lead - level.cam_lead) < 0.5f) level.cam_lead = lead;
+    level.cam_x = floorf(level.cam_x + level.cam_lead);
 }
 
 static void clamp_camera(void)
@@ -269,6 +278,28 @@ static void draw_hidden_box(const RoomInstance *in, const ObjectInfo *o)
     C2D_DrawRectSolid(l, t, 0, w, h, col);
 }
 
+void level_clamp_offset(int spr, float x, float y, float xs, float ys, float *dx, float *dy)
+{
+    *dx = *dy = 0;
+    if (!level.gui_clamp) return;
+    // Menu rooms (480x270 on a 400x240 screen): sprites stay 1:1, their positions are scaled
+    // to the screen so the layout keeps its proportions (edge items come inside). Objects at
+    // (0, 0) lay out a whole screen themselves: they keep the centred crop.
+    float px = x + level.cam_x, py = y + level.cam_y;
+    if (px != 0 || py != 0) {
+        *dx = floorf(px * TOP_W / level.room.width + 0.5f) - x;
+        *dy = floorf(py * TOP_H / level.room.height + 0.5f) - y;
+    }
+    x += *dx;
+    y += *dy;
+    const SpriteInfo *s = spr >= 0 ? sprite_info(spr) : NULL;
+    if (!s) return;
+    float l = x - s->xorigin * fabsf(xs), t = y - s->yorigin * fabsf(ys);
+    float r = l + s->width * fabsf(xs), b = t + s->height * fabsf(ys);
+    if (r - l <= TOP_W) *dx += l < 0 ? -l : r > TOP_W ? TOP_W - r : 0;  // still sticking out
+    if (b - t <= TOP_H) *dy += t < 0 ? -t : b > TOP_H ? TOP_H - b : 0;
+}
+
 static void draw_instances(const RoomLayer *l)
 {
     for (int k = 0; k < l->count; k++) {
@@ -287,6 +318,10 @@ static void draw_instances(const RoomLayer *l)
             continue;
         }
         float x = in->x - level.cam_x, y = in->y - level.cam_y;
+        float cdx, cdy;
+        level_clamp_offset(o->sprite, x, y, in->xscale, in->yscale, &cdx, &cdy);
+        x += cdx;
+        y += cdy;
         if (o->sprite < 0 || !on_screen(o->sprite, x, y, in->xscale, in->yscale)) continue;
         float frame = anim_frame(o->sprite, in->image_index, in->image_speed);
         if (in->world >= 0) {
@@ -303,6 +338,10 @@ static void draw_assets(const RoomLayer *l)
     for (int k = 0; k < l->count; k++) {
         const RoomAsset *a = &l->assets[k];
         float x = a->x - level.cam_x, y = a->y - level.cam_y;
+        float cdx, cdy;
+        level_clamp_offset(a->sprite, x, y, a->xscale, a->yscale, &cdx, &cdy);
+        x += cdx;
+        y += cdy;
         if (!on_screen(a->sprite, x, y, a->xscale, a->yscale)) continue;
         sprite_draw(a->sprite, anim_frame(a->sprite, a->head, a->anim_speed), x, y,
                     a->xscale, a->yscale, a->angle, a->colour, ((a->colour >> 24) & 0xFF) / 255.0f);

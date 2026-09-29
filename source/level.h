@@ -13,11 +13,13 @@ typedef struct Level {
     float cam_x, cam_y;
     float cam_dist;        // obj_camera look offset
     int cam_look_timer;
+    float cam_lead;        // look-ahead towards the facing side (settings.cam_lookahead)
     Player player;
     bool has_player;
     bool show_hidden;      // draw invisible objects as boxes
     bool pet_hidden;       // our pet is not drawn (escaped)
-    float view_w, view_h;  // visible room area for culling (400x240; menus use the whole 480x270)
+    float view_w, view_h;
+    bool gui_clamp;        // menu rooms shown 1:1: objects are kept inside the screen  // visible room area for culling (400x240; menus use the whole 480x270)
 } Level;
 
 extern Level level;
@@ -26,6 +28,8 @@ const char *room_name(int id);
 
 // Load a room. With spawn_character >= 0 the player spawns at the first spawn point.
 void level_load(int room_id, int spawn_character);
+// How far to move a sprite drawn at screen (x, y) so it stays inside the view (level.gui_clamp)
+void level_clamp_offset(int spr, float x, float y, float xs, float ys, float *dx, float *dy);
 void level_unload(void);
 
 // Keys from the HID state: D-Pad and Circle Pad move, A jump, B special, Y C-button,

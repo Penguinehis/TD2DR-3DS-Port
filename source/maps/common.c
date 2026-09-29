@@ -105,8 +105,9 @@ static void menu_money_draw(MapObj *o)
     // scr_counter_draw_s(obj_achivements.mercoins, x, y)
     char str[24];
     snprintf(str, sizeof str, "%llu", (unsigned long long)achiev.mercoins);
-    for (int i = 0; str[i]; i++)
-        sprite_draw(SPR_COUNTER, str[i] - '0', o->x + 11 * i - level.cam_x, o->y - level.cam_y, 1, 1, 0, 0xFFFFFFFF, 1);
+    float x = o->x - level.cam_x, y = o->y - level.cam_y, w = 11.0f * strlen(str);
+    if (level.gui_clamp && x + w > TOP_W - 2) x = TOP_W - 2 - w;  // menu rooms: keep the digits on screen
+    for (int i = 0; str[i]; i++) sprite_draw(SPR_COUNTER, str[i] - '0', x + 11 * i, y, 1, 1, 0, 0xFFFFFFFF, 1);
 }
 
 // ------------------------------------------------------------------ table

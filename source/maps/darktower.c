@@ -321,8 +321,8 @@ static void draw_gui(void)
     float t = current_time_ms();
     // obj_darktower_fog (depth 0)
     if (dt.fog)
-        sprite_draw(SPR_DARKTOWER_FOG, 0, (-495 / 2.0f + sinf(t / 4000) * 200) * GUI_SX, 0, GUI_SX, GUI_SY, 0,
-                    0xFFFFFFFF, 1);
+        sprite_draw_smooth(SPR_DARKTOWER_FOG, 0, (-495 / 2.0f + sinf(t / 4000) * 200) * GUI_SX, 0, GUI_SX, GUI_SY,
+                           0xFFFFFFFF, 1);
     // obj_darktower_darkness (depth -100): spr_black over the screen
     if (dt.darkness && dt.dark_alpha > 0)
         C2D_DrawRectSolid(0, 0, 0, TOP_W, TOP_H, C2D_Color32f(0, 0, 0, fminf(dt.dark_alpha, 1)));
@@ -333,7 +333,7 @@ static void draw_gui(void)
         if ((int)t % irand(20, 24) <= 10) {
             float xx = -4 + (rand() % 801) / 100.0f;  // random_range(-4, 4)
             // The camera zoom flicker (camera_set_view_pos / size) is not ported.
-            sprite_draw(SPR_DARKTOWER_JUMPSCARE, xx, xx * GUI_SX, 0, GUI_SX, GUI_SY, 0, 0xFFFFFFFF, 1);
+            sprite_draw_smooth(SPR_DARKTOWER_JUMPSCARE, xx, xx * GUI_SX, 0, GUI_SX, GUI_SY, 0xFFFFFFFF, 1);
         }
     }
 }

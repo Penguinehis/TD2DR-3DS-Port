@@ -39,6 +39,13 @@ void sprite_set_exact_tint(bool exact);
 // Draw a sprite repeated to cover a rectangle (background layers). Camera space.
 // True when sprite_draw_tiled with these arguments covers the whole view with opaque pixels
 bool sprite_tiled_covers(int spr, float frame, float x, float y, bool htile, bool vtile, float view_w, float view_h);
+// A texture rect (not a sprite) through the batcher: exact colour multiply (UI font glyphs)
+void sprite_draw_tex(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, float y, float scale, u32 rgba);
+// Scaled soft images (full-screen vignettes 480x270 -> 400x240): linear filtering, so the
+// uneven nearest-neighbour rows of a non-integer scale do not show
+void sprite_draw_smooth(int spr, float frame, float x, float y, float xscale, float yscale, u32 colour, float alpha);
+// A tilemap sprite's pixel columns [src_l, src_r) only (multiples of 16), unscaled
+void sprite_draw_part(int spr, float frame, float x, float y, int src_l, int src_r);
 void sprite_draw_tiled(int spr, float frame, float x, float y, bool htile, bool vtile,
                        float view_w, float view_h, u32 colour);
 
@@ -52,6 +59,7 @@ void sprite_preload(int spr);
 void sprites_flush(void);  // free every loaded sheet (a new level: the old one's art is not needed)  // load a sprite's sheets now (in the level-start window: at once)
 // The scene being drawn (after C2D_SceneBegin): 400x240 top, 320x240 bottom
 void sprites_scene(float w, float h);
+float sprites_scene_width(void);
 // Per-frame draw statistics (quads drawn, texture changes) of the previous frame
 extern int sprite_stat_quads, sprite_stat_switches;
 

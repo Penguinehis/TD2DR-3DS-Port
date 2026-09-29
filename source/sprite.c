@@ -301,9 +301,14 @@ void sprites_preload_group(int group)
 static bool exact_tint;
 void sprite_set_exact_tint(bool exact) { exact_tint = exact; }
 
+static bool draw_rect_fast(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, float y, float cx, float cy,
+                           float xs, float ys, float angle, u32 colour, float alpha);
+
 static void draw_rect(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, float y,
                       float cx, float cy, float xs, float ys, float angle, u32 colour, float alpha)
 {
+    if (draw_rect_fast(tex, sx, sy, sw, sh, x, y, cx, cy, xs, ys, angle, colour, alpha)) return;
+    // citro2d fallback (batch buffer full)
     Tex3DS_SubTexture sub = {
         .width = sw, .height = sh,
         .left = sx / (float)tex->width,
@@ -324,6 +329,12 @@ static void draw_rect(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, flo
         cx = sw - cx;
     }
     if (flip_v) angle += (float)M_PI;
+    // Pixel-perfect: unscaled, unrotated quads land on whole pixels (texels map 1:1 to the
+    // screen; a half-pixel position samples unevenly and shimmers while moving)
+    if (xs == 1 && ys == 1 && (angle == 0 || angle == (float)M_PI)) {
+        x = floorf(x + 0.5f);
+        y = floorf(y + 0.5f);
+    }
     stat_quads++;
     if (tex != stat_last_tex) {
         stat_switches++;
@@ -365,15 +376,17 @@ static int frame_index(const SpriteInfo *s, float frame)
 }
 
 
-// ------------------------------------------------------------------ tile batcher
-// Level art is thousands of 16x16 tiles a frame. citro2d's general quad path (rotation,
-// tint per corner) is too slow for that on Old 3DS, so tilemaps are drawn with a small shader
-// of their own: 4 vertices written straight into a buffer, flips by swapped texture
-// coordinates, one draw call per texture sheet. citro2d is flushed before and restored after.
+// ------------------------------------------------------------------ quad batcher
+// Every sprite and tile is drawn here, with a small shader of our own instead of citro2d's
+// quad path: vertices are written straight into a buffer, consecutive quads on one texture
+// become one draw call, and the colour multiplies the texture exactly (GameMaker's
+// image_blend; citro2d can only lerp towards a colour). The batch stays open across draws and
+// is closed (citro2d restored) by sprites_batch_end, which common.h calls before any citro2d
+// drawing, so the drawing order is kept.
 
-typedef struct { float x, y, u, v; } TileVtx;
-#define TB_MAX 4096                       // tiles per frame
-static TileVtx *tb_vtx;
+typedef struct { float x, y, u, v; u32 color; } QuadVtx;
+#define TB_MAX 6144                       // quads per frame
+static QuadVtx *tb_vtx;
 static u16 *tb_idx;
 static DVLB_s *tb_dvlb;
 static shaderProgram_s tb_prog;
@@ -381,16 +394,22 @@ static int tb_loc_proj;
 static C3D_AttrInfo tb_attr;
 static C3D_BufInfo tb_buf;
 static float scene_w = TOP_W, scene_h = TOP_H;
+static bool mb_on;          // our shader is bound
+static C3D_Tex *mb_tex;     // texture of the pending quads
+static int mb_first;        // first pending quad
+
+float sprites_scene_width(void) { return scene_w; }
 
 void sprites_scene(float w, float h)
 {
+    sprites_batch_end();
     scene_w = w;
     scene_h = h;
 }
 
 static void tiles_init(void)
 {
-    tb_vtx = linearAlloc(TB_MAX * 4 * sizeof(TileVtx));
+    tb_vtx = linearAlloc(TB_MAX * 4 * sizeof(QuadVtx));
     tb_idx = linearAlloc(TB_MAX * 6 * sizeof(u16));
     if (!tb_vtx || !tb_idx) {
         if (tb_vtx) linearFree(tb_vtx);
@@ -410,10 +429,83 @@ static void tiles_init(void)
     shaderProgramSetVsh(&tb_prog, &tb_dvlb->DVLE[0]);
     tb_loc_proj = shaderInstanceGetUniformLocation(tb_prog.vertexShader, "projection");
     AttrInfo_Init(&tb_attr);
-    AttrInfo_AddLoader(&tb_attr, 0, GPU_FLOAT, 2);  // v0 position
-    AttrInfo_AddLoader(&tb_attr, 1, GPU_FLOAT, 2);  // v1 texcoord
+    AttrInfo_AddLoader(&tb_attr, 0, GPU_FLOAT, 2);          // v0 position
+    AttrInfo_AddLoader(&tb_attr, 1, GPU_FLOAT, 2);          // v1 texcoord
+    AttrInfo_AddLoader(&tb_attr, 2, GPU_UNSIGNED_BYTE, 4);  // v2 colour
     BufInfo_Init(&tb_buf);
-    BufInfo_Add(&tb_buf, tb_vtx, sizeof(TileVtx), 2, 0x10);
+    BufInfo_Add(&tb_buf, tb_vtx, sizeof(QuadVtx), 3, 0x210);
+}
+
+static void mb_flush(void)
+{
+    int count = tb_used - mb_first;
+    if (mb_on && mb_tex && count > 0) {
+        C3D_TexBind(0, mb_tex);
+        C3D_DrawElements(GPU_TRIANGLES, count * 6, C3D_UNSIGNED_SHORT, tb_idx + mb_first * 6);
+        stat_switches++;
+    }
+    mb_first = tb_used;
+}
+
+void sprites_batch_end(void)
+{
+    if (!mb_on) return;
+    mb_flush();
+    mb_on = false;
+    C2D_Prepare();
+}
+
+// Room for n quads on tex, our shader bound. False: draw with citro2d instead.
+static bool mb_begin(C3D_Tex *tex, int n)
+{
+    if (!tb_vtx || tb_used + n > TB_MAX) {
+        sprites_batch_end();
+        return false;
+    }
+    if (!mb_on) {
+        (C2D_Flush)();  // citro2d's queued quads first
+        C3D_BindProgram(&tb_prog);
+        C3D_SetAttrInfo(&tb_attr);
+        C3D_SetBufInfo(&tb_buf);
+        C3D_Mtx proj, view, mvp;
+        Mtx_OrthoTilt(&proj, 0.0f, scene_w, scene_h, 0.0f, 1.0f, -1.0f, true);
+        C2D_ViewSave(&view);
+        Mtx_Multiply(&mvp, &proj, &view);
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, tb_loc_proj, &mvp);
+        C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
+        C3D_CullFace(GPU_CULL_NONE);
+        C3D_TexEnv *env = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(env);
+        C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, 0);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+        for (int st = 1; st < 6; st++) C3D_TexEnvInit(C3D_GetTexEnv(st));
+        mb_on = true;
+        mb_first = tb_used;
+        mb_tex = tex;
+    } else if (tex != mb_tex) {
+        mb_flush();
+        mb_tex = tex;
+    }
+    return true;
+}
+
+// GameMaker colour (BGR) + alpha -> vertex colour (the GPU reads the bytes as R, G, B, A)
+static inline u32 mb_color(u32 colour, float alpha)
+{
+    u32 a = (u32)(fminf(fmaxf(alpha, 0), 1) * 255.0f + 0.5f);
+    return (a << 24) | (colour & 0xFFFFFF);
+}
+
+// One quad: the 4 corners (top-left, top-right, bottom-left, bottom-right) and texcoords
+static inline void mb_quad(const float *xs, const float *ys, float u0, float v0, float u1, float v1, u32 color)
+{
+    QuadVtx *v = tb_vtx + tb_used * 4;
+    v[0] = (QuadVtx){ xs[0], ys[0], u0, v0, color };
+    v[1] = (QuadVtx){ xs[1], ys[1], u1, v0, color };
+    v[2] = (QuadVtx){ xs[2], ys[2], u0, v1, color };
+    v[3] = (QuadVtx){ xs[3], ys[3], u1, v1, color };
+    tb_used++;
+    stat_quads++;
 }
 
 typedef struct { float x, y; u32 cell; } TileRef;
@@ -437,33 +529,15 @@ static bool draw_tilemap_fast(const SpriteInfo *s, const MapRec *m, float left, 
     }
     if (!n) return true;
     if (tb_used + n > TB_MAX) return false;
+    u32 color = mb_color(colour, alpha);
 
-    C2D_Flush();
-    C3D_BindProgram(&tb_prog);
-    C3D_SetAttrInfo(&tb_attr);
-    C3D_SetBufInfo(&tb_buf);
-    C3D_Mtx proj, view, mvp;
-    Mtx_OrthoTilt(&proj, 0.0f, scene_w, scene_h, 0.0f, 1.0f, -1.0f, true);
-    C2D_ViewSave(&view);
-    Mtx_Multiply(&mvp, &proj, &view);
-    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, tb_loc_proj, &mvp);
-    C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
-    C3D_CullFace(GPU_CULL_NONE);
-    C3D_TexEnv *env = C3D_GetTexEnv(0);
-    C3D_TexEnvInit(env);
-    C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_CONSTANT, 0);
-    C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
-    // image_blend multiplies exactly here (GameMaker BGR = the GPU's little-endian RGBA)
-    u32 a = (u32)(fminf(fmaxf(alpha, 0), 1) * 255.0f);
-    C3D_TexEnvColor(env, (a << 24) | (colour & 0xFFFFFF));
-    for (int st = 1; st < 6; st++) C3D_TexEnvInit(C3D_GetTexEnv(st));
-
-    // one batch per sheet (tiles of a layer never overlap, so their order is free)
+    // grouped by sheet (tiles of a layer never overlap, so their order is free)
     int done = 0;
     while (done < n) {
         u32 sheet = CELL_INDEX(tb_list[done].cell) / TILES_PER_SHEET;
         C3D_Tex *tex = sheet_get(s->group, true, (int)sheet);
-        int start = tb_used, k = done;
+        int k = done;
+        if (tex && !mb_begin(tex, n - done)) return false;
         float iw = tex ? 1.0f / tex->width : 0, ih = tex ? 1.0f / tex->height : 0;
         for (int i = done; i < n; i++) {
             u32 cell = tb_list[i].cell, idx = CELL_INDEX(cell);
@@ -478,26 +552,61 @@ static bool draw_tilemap_fast(const SpriteInfo *s, const MapRec *m, float left, 
             float v0 = 1.0f - sy * ih, v1 = 1.0f - (sy + TILE) * ih;
             if (cell & CELL_FLIP_H) { float q = u0; u0 = u1; u1 = q; }
             if (cell & CELL_FLIP_V) { float q = v0; v0 = v1; v1 = q; }
-            TileVtx *v = tb_vtx + tb_used * 4;
             float x0 = t.x, y0 = t.y, x1 = t.x + tw, y1 = t.y + th;
-            v[0] = (TileVtx){ x0, y0, u0, v0 };
-            v[1] = (TileVtx){ x1, y0, u1, v0 };
-            v[2] = (TileVtx){ x0, y1, u0, v1 };
-            v[3] = (TileVtx){ x1, y1, u1, v1 };
-            tb_used++;
+            const float qx[4] = { x0, x1, x0, x1 }, qy[4] = { y0, y0, y1, y1 };
+            mb_quad(qx, qy, u0, v0, u1, v1, color);
         }
         done = k;
-        int count = tb_used - start;
-        if (tex && count > 0) {
-            C3D_TexBind(0, tex);
-            C3D_DrawElements(GPU_TRIANGLES, count * 6, C3D_UNSIGNED_SHORT, tb_idx + start * 6);
-            stat_quads += count;
-            stat_switches++;
-        }
     }
-    C2D_Prepare();
     return true;
 }
+
+// A sprite rect (see draw_rect) through the batcher. False: use citro2d.
+static bool smooth_next;          // sprite_draw_smooth: linear filtering for this draw
+static C3D_Tex *smooth_tex[8];
+static int smooth_count;
+
+static bool draw_rect_fast(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, float y, float cx, float cy,
+                           float xs, float ys, float angle, u32 colour, float alpha)
+{
+    if (smooth_next && smooth_count < 8) {
+        C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
+        smooth_tex[smooth_count++] = tex;
+    }
+    if (!mb_begin(tex, 1)) return false;
+    float iw = 1.0f / tex->width, ih = 1.0f / tex->height;
+    float u0 = sx * iw, u1 = (sx + sw) * iw;
+    float v0 = 1.0f - sy * ih, v1 = 1.0f - (sy + sh) * ih;
+    // mirroring: swap texcoords and mirror the anchor
+    if (xs < 0) { float q = u0; u0 = u1; u1 = q; xs = -xs; cx = sw - cx; }
+    if (ys < 0) { float q = v0; v0 = v1; v1 = q; ys = -ys; cy = sh - cy; }
+    float w = sw * xs, h = sh * ys, ax = cx * xs, ay = cy * ys;
+    float lx[4] = { -ax, w - ax, -ax, w - ax }, ly[4] = { -ay, -ay, h - ay, h - ay };
+    float qx[4], qy[4];
+    if (angle == 0) {
+        // pixel-perfect: unscaled quads start on whole pixels
+        if (xs == 1 && ys == 1) {
+            x = floorf(x - ax + 0.5f) + ax;
+            y = floorf(y - ay + 0.5f) + ay;
+        }
+        for (int i = 0; i < 4; i++) {
+            qx[i] = x + lx[i];
+            qy[i] = y + ly[i];
+        }
+    } else {
+        // clockwise radians around the anchor, like citro2d
+        float c = cosf(angle), s = sinf(angle);
+        for (int i = 0; i < 4; i++) {
+            qx[i] = x + lx[i] * c - ly[i] * s;
+            qy[i] = y + lx[i] * s + ly[i] * c;
+        }
+    }
+    mb_quad(qx, qy, u0, v0, u1, v1, mb_color(colour, alpha));
+    return true;
+}
+
+// sprite_draw_part: only the frame's pixel columns [clip_l, clip_r) (tile aligned)
+static int clip_l = -1000000, clip_r = 1000000;
 
 static void draw_tilemap(const SpriteInfo *s, const MapRec *m, float x, float y, float xs, float ys, u32 colour, float alpha)
 {
@@ -505,6 +614,10 @@ static void draw_tilemap(const SpriteInfo *s, const MapRec *m, float x, float y,
     float left = x - s->xorigin * xs + m->x0 * xs;
     float top = y - s->yorigin * ys + m->y0 * ys;
     float tw = TILE * xs, th = TILE * ys;
+    if (xs == 1 && ys == 1) {  // whole pixels (parallax layers move by fractions)
+        left = floorf(left + 0.5f);
+        top = floorf(top + 0.5f);
+    }
     if (tw <= 0 || th <= 0) return;
     int c0 = (int)floorf((0 - left) / tw), c1 = (int)ceilf((TOP_W - left) / tw);
     int r0 = (int)floorf((0 - top) / th), r1 = (int)ceilf((TOP_H - top) / th);
@@ -512,6 +625,8 @@ static void draw_tilemap(const SpriteInfo *s, const MapRec *m, float x, float y,
     if (r0 < 0) r0 = 0;
     if (c1 > m->cols) c1 = m->cols;
     if (r1 > m->rows) r1 = m->rows;
+    if (clip_l > -1000000 && c0 < (clip_l - m->x0) / TILE) c0 = (clip_l - m->x0) / TILE;
+    if (clip_r < 1000000 && c1 > (clip_r - m->x0) / TILE) c1 = (clip_r - m->x0) / TILE;
     if (c0 >= c1 || r0 >= r1) return;
     if (draw_tilemap_fast(s, m, left, top, tw, th, c0, c1, r0, r1, colour, alpha)) return;
 
@@ -590,6 +705,39 @@ bool sprite_tiled_covers(int spr, float frame, float x, float y, bool htile, boo
             }
         }
     return true;
+}
+
+void sprite_draw_tex(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, float y, float scale, u32 rgba)
+{
+    // rgba: a C2D_Color32 value (R in the low byte like GameMaker's BGR colours)
+    draw_rect(tex, sx, sy, sw, sh, x, y, 0, 0, scale, scale, 0, rgba & 0xFFFFFF, (rgba >> 24) / 255.0f);
+}
+
+void sprite_draw_smooth(int spr, float frame, float x, float y, float xscale, float yscale, u32 colour, float alpha)
+{
+    // tiled sprites would show seams between tiles with linear filtering
+    const SpriteInfo *s = sprite_info(spr);
+    if (!s || s->mode != SPRITE_NORMAL) {
+        sprite_draw(spr, frame, x, y, xscale, yscale, 0, colour, alpha);
+        return;
+    }
+    // the filter is read when the draw is recorded: close the batch around it
+    sprites_batch_end();
+    smooth_next = true;
+    smooth_count = 0;
+    sprite_draw(spr, frame, x, y, xscale, yscale, 0, colour, alpha);
+    sprites_batch_end();
+    smooth_next = false;
+    for (int i = 0; i < smooth_count; i++) C3D_TexSetFilter(smooth_tex[i], GPU_NEAREST, GPU_NEAREST);
+}
+
+void sprite_draw_part(int spr, float frame, float x, float y, int src_l, int src_r)
+{
+    clip_l = src_l;
+    clip_r = src_r;
+    sprite_draw(spr, frame, x, y, 1, 1, 0, 0xFFFFFFFF, 1);
+    clip_l = -1000000;
+    clip_r = 1000000;
 }
 
 void sprite_draw_tiled(int spr, float frame, float x, float y, bool htile, bool vtile,

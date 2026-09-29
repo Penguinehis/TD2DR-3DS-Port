@@ -1242,7 +1242,7 @@ void game_update(u32 held, u32 down)
         pkt_begin(&pk, CLIENT_PING);
         net_send(&pk, false);
     }
-    if (down & KEY_X) {
+    if (down & settings.bind[BIND_CHAT]) {
         char msg[64];
         if (ui_keyboard("Chat message", NULL, msg, sizeof msg, 40)) net_send_chat(msg);
     }
@@ -1413,8 +1413,8 @@ static void gui_fullscreen(int spr, float frame, float alpha)
     if (alpha <= 0) return;
     const SpriteInfo *s = sprite_info(spr);
     if (!s) return;
-    sprite_draw(spr, frame, s->xorigin * TOP_W / 480.0f, s->yorigin * TOP_H / 270.0f, TOP_W / 480.0f, TOP_H / 270.0f, 0,
-                0xFFFFFFFF, alpha);
+    sprite_draw_smooth(spr, frame, s->xorigin * TOP_W / 480.0f, s->yorigin * TOP_H / 270.0f, TOP_W / 480.0f,
+                       TOP_H / 270.0f, 0xFFFFFFFF, alpha);
 }
 
 static bool room_has_overlay(int room)
@@ -1443,9 +1443,9 @@ static int health_frame(int character, int hp, int revival)
     return f + (int)roundf((1.0f - hp / 100.0f) * 5);
 }
 
-static void draw_health_icon(float x, int character, int hp, int revival, bool red, bool escaped, int dead_timer)
+static void draw_health_icon(float x, float y, int character, int hp, int revival, bool red, bool escaped,
+                             int dead_timer)
 {
-    float y = GY_BOTTOM(268);
     if (escaped) {
         sprite_draw(SPR_PLAYERESCAPED, character - CHARACTER_TAILS, x, y, 1, 1, 0, 0xFFFFFFFF, 1);
         return;
@@ -1460,7 +1460,7 @@ static void draw_health_icon(float x, int character, int hp, int revival, bool r
     if (revival == 0 && hp <= 0 && dead_timer < 31) {
         char n[16];
         snprintf(n, sizeof n, "%d", dead_timer);
-        number_spr(x + 12, GY_BOTTOM(264), n, 0xFFFFFF, 1);
+        number_spr(x + 12, y + 4, n, 0xFFFFFF, 1);
     }
 }
 
@@ -1581,25 +1581,7 @@ static void draw_level_gui(void)
             sprite_draw(SPR_STATUS, demon_side ? 1 : 0, TOP_W / 2, 32, 1, 1, 0, 0xFFFFFFFF, 1);
         }
 
-        // health icons: ours first, then the other survivors
-        int n = 0;
-        for (int i = 0; i < NET_MAX_PLAYERS; i++)
-            if (g.puppets[i].used && g.puppets[i].id != net.exe_id) n++;
-        if (!is_exe()) n++;
-        float pos = TOP_W / 2 - n * 28 / 2.0f;
-        if (!is_exe()) {
-            int ch = level.has_player ? me->character : net.my_character;
-            if (ch >= CHARACTER_TAILS)
-                draw_health_icon(pos, ch, me->hp, me->revivalTimes, me->redRingTimer > 0, g.escaped || !level.has_player,
-                                 g.dead_timer);
-            pos += 28;
-        }
-        for (int i = 0; i < NET_MAX_PLAYERS; i++) {
-            const Puppet *p = &g.puppets[i];
-            if (!p->used || p->id == net.exe_id || p->character < CHARACTER_TAILS) continue;
-            draw_health_icon(pos, p->character, p->hp, p->revival, p->red_ring, p->escaped, p->dead_timer);
-            pos += 28;
-        }
+        // (the players' health icons are on the bottom screen: draw_player_panel)
     }
 
     // title card and fade-in
@@ -1656,6 +1638,55 @@ void game_draw_top(void)
         ui_text_center(TOP_W / 2, 60, 1.0f, UI_YELLOW, "%d", g.dead_timer);
 }
 
+// One player of the bottom-screen panel: health icon, name, hp and rings (the rings of the
+// others matter: they heal and revive)
+static void panel_cell(int slot, const char *name, int character, int hp, int revival, int rings, bool red,
+                       bool escaped, int dead_timer, bool is_me)
+{
+    float x = 4 + (slot % 2) * 158, y = 56 + (slot / 2) * 30;
+    if (is_me) C2D_DrawRectSolid(x - 2, y - 1, 0, 156, 29, C2D_Color32(40, 40, 64, 255));
+    if (character == CHARACTER_EXE) {
+        ui_text(x + 4, y + 6, 0.45f, UI_RED, "EXE  %.12s", name);
+        return;
+    }
+    // icons are drawn at their origin: centre of a 24x24 box
+    const SpriteInfo *s = sprite_info(SPR_PLAYERHEALTH);
+    float ix = x + (s ? s->xorigin : 12), iy = y + (s ? s->yorigin : 12);
+    draw_health_icon(ix, iy, character, hp, revival, red, escaped, dead_timer);
+    u32 col = revival >= 2 ? UI_RED : escaped ? UI_GREEN : UI_WHITE;
+    ui_text(x + 30, y - 1, 0.42f, col, "%.12s", name);
+    if (escaped) {
+        ui_text(x + 30, y + 13, 0.4f, UI_GREEN, "escaped");
+    } else if (revival >= 2) {
+        ui_text(x + 30, y + 13, 0.4f, UI_RED, "demon");
+    } else {
+        u32 hc = hp > 40 ? UI_GREEN : hp > 20 ? UI_YELLOW : UI_RED;
+        ui_text(x + 30, y + 13, 0.4f, hp > 0 ? hc : UI_RED, hp > 0 ? "HP %d" : "down", hp);
+        ui_text(x + 82, y + 13, 0.4f, UI_YELLOW, "rings %d", rings);
+    }
+}
+
+static void draw_player_panel(void)
+{
+    const Player *me = &level.player;
+    int slot = 0;
+    if (is_exe()) {
+        panel_cell(slot++, settings.nickname, CHARACTER_EXE, 0, 0, 0, false, false, 31, true);
+    } else {
+        int ch = level.has_player ? me->character : net.my_character;
+        if (ch >= CHARACTER_TAILS)
+            panel_cell(slot++, settings.nickname, ch, me->hp, me->revivalTimes, me->rings, me->redRingTimer > 0,
+                       g.escaped || !level.has_player, g.dead_timer, true);
+    }
+    for (int i = 0; i < NET_MAX_PLAYERS && slot < 8; i++) {
+        const Puppet *p = &g.puppets[i];
+        if (!p->used) continue;
+        int ch = p->id == net.exe_id ? CHARACTER_EXE : p->character;
+        if (ch < 0) continue;
+        panel_cell(slot++, p->nickname, ch, p->hp, p->revival, p->rings, p->red_ring, p->escaped, p->dead_timer, false);
+    }
+}
+
 void game_draw_bottom(void)
 {
     const Player *me = &level.player;
@@ -1687,17 +1718,8 @@ void game_draw_bottom(void)
         if (me->redRingTimer > 0) ui_text(190, 50, 0.45f, UI_RED, "red ring %d", me->redRingTimer / 60);
     }
 
-    // players
-    int row = 0;
-    for (int i = 0; i < NET_MAX_PLAYERS; i++) {
-        const Puppet *p = &g.puppets[i];
-        if (!p->used) continue;
-        u32 col = p->character == CHARACTER_EXE || p->revival >= 2 ? UI_RED : p->escaped ? UI_GREEN : UI_WHITE;
-        ui_text(10, 70 + row * 14, 0.42f, col, "%.16s%s%s", p->nickname, p->escaped ? "  (escaped)" : "",
-                p->hp <= 0 && p->character != CHARACTER_EXE ? "  (down)" : "");
-        row++;
-    }
+    draw_player_panel();
     if (g.status_timer > 0) ui_text_coded(10, 196, 0.45f, UI_YELLOW, g.status);
-    ui_text(10, 214, 0.42f, UI_GRAY, "X: chat");
-    if (settings.show_perf) main_draw_perf(10, 180);
+    ui_text(10, 214, 0.42f, UI_GRAY, "%s: chat", button_name(settings.bind[BIND_CHAT]));
+    if (settings.show_perf) main_draw_perf(10, 178);
 }

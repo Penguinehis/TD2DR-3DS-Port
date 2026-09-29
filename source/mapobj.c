@@ -214,8 +214,15 @@ void mapobj_draw_self(const MapObj *o)
 static void draw_obj(MapObj *o)
 {
     if (!o->used || o->destroyed || !o->visible) return;
+    float dx = 0, dy = 0;
+    if (level.gui_clamp)
+        level_clamp_offset(o->sprite, o->x - level.cam_x, o->y - level.cam_y, o->xscale, o->yscale, &dx, &dy);
+    o->x += dx;
+    o->y += dy;
     if (o->def && o->def->draw) o->def->draw(o);
     else mapobj_draw_self(o);
+    o->x -= dx;
+    o->y -= dy;
 }
 
 bool mapobj_owns(const RoomInstance *in) { return in->mapobj >= 0 && objs[in->mapobj].used; }

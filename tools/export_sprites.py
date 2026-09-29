@@ -34,7 +34,8 @@ TILES_PER_ROW = MAX_TEX // TILE
 TILES_PER_SHEET = TILES_PER_ROW * TILES_PER_ROW
 TILEMAP_MIN_AREA = 400 * 240   # a frame at least one 3DS screen big becomes a tilemap
 # Full-screen GUI overlays drawn every frame: one quad from a normal sheet instead of ~500 tiles
-FORCE_NORMAL = {"spr_screenoverlay", "spr_screenoverlay2", "spr_hidegui", "spr_attackgui"}
+FORCE_NORMAL = {"spr_screenoverlay", "spr_screenoverlay2", "spr_hidegui", "spr_attackgui", "spr_darktower_jumpscare",
+                "spr_weed_vinjetk"}
 
 MODE_UNUSED, MODE_MASK, MODE_TILEMAP, MODE_NORMAL = 0, 1, 2, 3
 KIND_PRECISE, KIND_PRECISE_PER_FRAME = 0, 4
@@ -312,7 +313,7 @@ def main():
     # sheets
     gfx_dir = os.path.join(PORT_ROOT, "gfx")
     for f in os.listdir(gfx_dir):
-        if f.endswith((".png", ".t3s")):
+        if f.endswith((".png", ".t3s")) and not f.startswith("ui_"):  # ui_*: tools/export_font.py
             os.remove(os.path.join(gfx_dir, f))
     report, group_hdr = [], bytearray()
     for g in groups:

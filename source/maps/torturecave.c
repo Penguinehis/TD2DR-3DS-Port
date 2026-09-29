@@ -105,8 +105,8 @@ static void mine_draw_gui(MapObj *o)
     if (player_time_min > 0) tc.mine_alpha = 0;
     else if (tc.mine_alpha < 1) tc.mine_alpha += 0.016f / 60;
     // draw_self at GUI (0, 0); the 480x270 GUI is mapped onto the 400x240 screen
-    sprite_draw(o->sprite, o->image_index, 0, 0, o->xscale * TOP_W / 480.0f, o->yscale * TOP_H / 270.0f, 0,
-                o->blend, tc.mine_alpha);
+    sprite_draw_smooth(o->sprite, o->image_index, 0, 0, o->xscale * TOP_W / 480.0f, o->yscale * TOP_H / 270.0f,
+                       o->blend, tc.mine_alpha);
 }
 
 // ------------------------------------------------------------------ obj_abandon_face

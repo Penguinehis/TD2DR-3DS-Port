@@ -1,0 +1,24 @@
+﻿The FontStruction “Sonic 3 & Knuckles HUD Font”
+(https://fontstruct.com/fontstructions/show/2204055) by “chriswal1200” is
+licensed under a Creative Commons Attribution Share Alike license
+(http://creativecommons.org/licenses/by-sa/3.0/).
+“Sonic 3 & Knuckles HUD Font” was originally cloned (copied) from the
+FontStruction “Sonic The Hedgehog 1 HUD Font”
+(https://fontstruct.com/fontstructions/show/2202732) by “chriswal1200”,
+which is licensed under a Creative Commons Attribution Share Alike license
+(http://creativecommons.org/licenses/by-sa/3.0/).
+“Sonic The Hedgehog 1 HUD Font” was in turn cloned (copied) from the
+FontStruction “Sonic 1 HUD Font”
+(https://fontstruct.com/fontstructions/show/1320066) by “TheWolfBunny”,
+which is licensed under a Creative Commons Attribution Share Alike license
+(http://creativecommons.org/licenses/by-sa/3.0/).
+“Sonic 1 HUD Font” was in turn cloned (copied) from the FontStruction
+“Sonic Genesis/Mega Drive Font”
+(https://fontstruct.com/fontstructions/show/1143200) by “FontofFame”, which
+is licensed under a Creative Commons Attribution Share Alike license
+(http://creativecommons.org/licenses/by-sa/3.0/).
+“Sonic Genesis/Mega Drive Font” was in turn cloned (copied) from the
+FontStruction “Sonic HUD Font”
+(https://fontstruct.com/fontstructions/show/450363) by “Fuzzball”, which is
+licensed under a Creative Commons Attribution Share Alike license
+(http://creativecommons.org/licenses/by-sa/3.0/).

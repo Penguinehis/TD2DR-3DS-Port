@@ -7,6 +7,27 @@
 
 Settings settings;
 
+const char *BIND_NAMES[BIND_COUNT] = { "Jump", "Special", "Ability (C)", "Emotion 1", "Emotion 2", "Emotion 3",
+                                       "Chat" };
+const u32 BIND_DEFAULTS[BIND_COUNT] = { KEY_A, KEY_B, KEY_Y, KEY_L, KEY_R, KEY_ZL | KEY_ZR, KEY_X };
+
+const char *button_name(u32 keys)
+{
+    static char buf[32];
+    static const struct { u32 key; const char *name; } NAMES[] = {
+        { KEY_A, "A" }, { KEY_B, "B" }, { KEY_X, "X" }, { KEY_Y, "Y" },
+        { KEY_L, "L" }, { KEY_R, "R" }, { KEY_ZL, "ZL" }, { KEY_ZR, "ZR" },
+    };
+    buf[0] = 0;
+    for (unsigned i = 0; i < sizeof NAMES / sizeof *NAMES; i++)
+        if (keys & NAMES[i].key) {
+            if (buf[0]) strcat(buf, " / ");
+            strcat(buf, NAMES[i].name);
+        }
+    if (!buf[0]) strcpy(buf, "-");
+    return buf;
+}
+
 void settings_load(void)
 {
     memset(&settings, 0, sizeof settings);
@@ -19,6 +40,8 @@ void settings_load(void)
     APT_CheckNew3DS(&n3ds);
     if (!n3ds) settings.gfx_parallax = settings.gfx_weather = false;
     settings.music_volume = settings.sfx_volume = 10;
+    settings.cam_lookahead = true;
+    memcpy(settings.bind, BIND_DEFAULTS, sizeof settings.bind);
 
     FILE *f = fopen(SETTINGS_PATH, "r");
     if (!f) return;
@@ -39,6 +62,11 @@ void settings_load(void)
         else if (!strcmp(key, "gfx_weather")) settings.gfx_weather = atoi(val);
         else if (!strcmp(key, "gfx_overlays")) settings.gfx_overlays = atoi(val);
         else if (!strcmp(key, "show_perf")) settings.show_perf = atoi(val);
+        else if (!strcmp(key, "cam_lookahead")) settings.cam_lookahead = atoi(val);
+        else if (!strncmp(key, "bind", 4) && atoi(key + 4) >= 0 && atoi(key + 4) < BIND_COUNT) {
+            u32 k = (u32)strtoul(val, NULL, 16) & BIND_BUTTONS;
+            if (k) settings.bind[atoi(key + 4)] = k;
+        }
         else if (!strcmp(key, "music_volume")) settings.music_volume = atoi(val);
         else if (!strcmp(key, "sfx_volume")) settings.sfx_volume = atoi(val);
     }
@@ -58,6 +86,8 @@ void settings_save(void)
             settings.gfx_overlays);
     fprintf(f, "music_volume=%d\nsfx_volume=%d\nshow_perf=%d\n", settings.music_volume, settings.sfx_volume,
             settings.show_perf);
+    fprintf(f, "cam_lookahead=%d\n", settings.cam_lookahead);
+    for (int i = 0; i < BIND_COUNT; i++) fprintf(f, "bind%d=%lx\n", i, (unsigned long)settings.bind[i]);
     fclose(f);
 }
 

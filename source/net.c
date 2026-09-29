@@ -271,6 +271,27 @@ int net_player_count(void)
     return n;
 }
 
+// Nicknames may carry the PC chat colour codes (\ @ & / | ` ~ and U+2116); the 3DS shows names
+// plain, so they are removed.
+static void set_nickname(NetPlayer *p, const char *name)
+{
+    char *o = p->nickname, *end = p->nickname + sizeof p->nickname - 1;
+    for (const char *c = name; *c && o < end; c++) {
+        if (strchr("\\@&/|`~", *c)) continue;
+        if ((u8)c[0] == 0xE2 && (u8)c[1] == 0x84 && (u8)c[2] == 0x96) {
+            c += 2;
+            continue;
+        }
+        *o++ = *c;
+    }
+    *o = 0;
+    char *t = p->nickname;
+    while (*t == ' ') t++;
+    memmove(p->nickname, t, strlen(t) + 1);
+    for (size_t n = strlen(p->nickname); n > 0 && p->nickname[n - 1] == ' '; n--) p->nickname[n - 1] = 0;
+    if (!p->nickname[0]) snprintf(p->nickname, sizeof p->nickname, "player");
+}
+
 static void add_chat(const char *sender, const char *msg)
 {
     if (net.chat_count == NET_CHAT_LINES) {
@@ -395,7 +416,7 @@ static void handle_pending(PacketType type, bool pass, NetReader *r)
         const char *nick = rd_str(r);
         NetPlayer *p = add_player(id);
         if (!p) break;
-        snprintf(p->nickname, sizeof p->nickname, "%s", nick);
+        set_nickname(p, nick);
         p->wait_in_game = in_game;
         if (in_game) {
             p->wait_exe = rd_u8(r);
@@ -432,7 +453,7 @@ static void handle_lobby(PacketType type, bool pass, NetReader *r)
         const char *name = rd_str(r);
         NetPlayer *p = add_player(id);
         if (!p) break;
-        snprintf(p->nickname, sizeof p->nickname, "%s", name);
+        set_nickname(p, name);
         p->icon = rd_u8(r);
         p->pet = (s8)rd_u8(r);
         net.ev_join++;
@@ -444,7 +465,7 @@ static void handle_lobby(PacketType type, bool pass, NetReader *r)
         const char *name = rd_str(r);
         NetPlayer *p = add_player(id);
         if (!p) break;
-        snprintf(p->nickname, sizeof p->nickname, "%s", name);
+        set_nickname(p, name);
         p->ready = ready;
         p->icon = rd_u8(r);
         p->pet = (s8)rd_u8(r);

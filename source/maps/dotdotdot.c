@@ -145,8 +145,8 @@ static void i_draw_gui(MapObj *o)
     const SpriteInfo *s = sprite_info(SPR_SCREENOVERLAY2);
     if (!s) return;
     float xs = TOP_W / (float)s->width, ys = TOP_H / (float)s->height;
-    if (dot.fade2 > 0) sprite_draw(SPR_SCREENOVERLAY2, 0, s->xorigin * xs, s->yorigin * ys, xs, ys, 0, 0xFFFFFFFF, fminf(dot.fade2, 1));
-    if (dot.fade3 > 0) sprite_draw(SPR_SCREENOVERLAY2, 1, s->xorigin * xs, s->yorigin * ys, xs, ys, 0, 0xFFFFFFFF, fminf(dot.fade3, 1));
+    if (dot.fade2 > 0) sprite_draw_smooth(SPR_SCREENOVERLAY2, 0, s->xorigin * xs, s->yorigin * ys, xs, ys, 0xFFFFFFFF, fminf(dot.fade2, 1));
+    if (dot.fade3 > 0) sprite_draw_smooth(SPR_SCREENOVERLAY2, 1, s->xorigin * xs, s->yorigin * ys, xs, ys, 0xFFFFFFFF, fminf(dot.fade3, 1));
 }
 
 int maps_music(int room, int music)

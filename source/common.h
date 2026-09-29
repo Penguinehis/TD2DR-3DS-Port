@@ -16,6 +16,18 @@
 
 #define PACKED __attribute__((packed))
 
+// Sprites and tiles are batched with a shader of our own (sprite.c); any citro2d drawing first
+// closes that batch so the drawing order holds.
+void sprites_batch_end(void);
+#define C2D_DrawRectSolid(...) (sprites_batch_end(), C2D_DrawRectSolid(__VA_ARGS__))
+#define C2D_DrawImage(...) (sprites_batch_end(), C2D_DrawImage(__VA_ARGS__))
+#define C2D_DrawImageAt(...) (sprites_batch_end(), C2D_DrawImageAt(__VA_ARGS__))
+#define C2D_DrawText(...) (sprites_batch_end(), C2D_DrawText(__VA_ARGS__))
+#define C2D_TargetClear(...) (sprites_batch_end(), C2D_TargetClear(__VA_ARGS__))
+#define C2D_SceneBegin(...) (sprites_batch_end(), C2D_SceneBegin(__VA_ARGS__))
+#define C2D_Flush(...) (sprites_batch_end(), C2D_Flush(__VA_ARGS__))
+#define C3D_FrameEnd(...) (sprites_batch_end(), C3D_FrameEnd(__VA_ARGS__))
+
 // Whole-file read into a malloc'd buffer. Returns NULL on failure.
 void *read_file(const char *path, size_t *size_out);
 

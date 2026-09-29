@@ -1,7 +1,11 @@
 #include "ui.h"
 
 #include <stdarg.h>
+#include <math.h>
 #include <string.h>
+
+#include "gen/ui_font.h"
+#include "sprite.h"
 
 static C2D_TextBuf text_buf;
 
@@ -65,16 +69,69 @@ static const C2D_Text *get_text(const char *s, float *width)
     return NULL;
 }
 
+// ------------------------------------------------------------------ pixel font
+// Sonic 3 & Knuckles HUD Font (chriswal1200, FontStruct, CC BY-SA 3.0), one texel per screen
+// pixel: used for every plain ASCII string; others fall back to the system font.
+
+static C2D_SpriteSheet font_sheet;
+static C3D_Tex *font_tex;
+
+static bool font_usable(const char *s)
+{
+    if (!font_tex) return false;
+    for (; *s; s++)
+        if ((u8)*s < UI_FONT_FIRST || (u8)*s > UI_FONT_LAST) return false;
+    return true;
+}
+
+static int font_scale(float size) { return size >= 0.62f ? 2 : 1; }
+
+static int font_glyph(char c)
+{
+    if (c == '{') c = '(';
+    if (c == '}') c = ')';
+    return (u8)c - UI_FONT_FIRST;
+}
+
+static float font_width(const char *s, int scale)
+{
+    int w = 0;
+    for (; *s; s++) w += UI_FONT_ADVANCE[font_glyph(*s)];
+    return (float)(w * scale);
+}
+
+static float font_draw(float x, float y, int scale, u32 color, const char *s)
+{
+    x = floorf(x + 0.5f);
+    y = floorf(y + 0.5f);
+    // white glyphs times the colour (the sprite batcher multiplies exactly)
+    float x0 = x;
+    for (; *s; s++) {
+        int g = font_glyph(*s);
+        if (*s != ' ')
+            sprite_draw_tex(font_tex, (g % UI_FONT_COLS) * UI_FONT_CELL_W, (g / UI_FONT_COLS) * UI_FONT_HEIGHT,
+                            UI_FONT_CELL_W, UI_FONT_HEIGHT, x, y, (float)scale, color);
+        x += UI_FONT_ADVANCE[g] * scale;
+    }
+    return x - x0;
+}
+
 void ui_init(void)
 {
     text_buf = C2D_TextBufNew(8192);
     tc_buf = C2D_TextBufNew(6144);
+    font_sheet = C2D_SpriteSheetLoad("romfs:/gfx/ui_font.t3x");
+    if (font_sheet) {
+        font_tex = C2D_SpriteSheetGetImage(font_sheet, 0).tex;
+        C3D_TexSetFilter(font_tex, GPU_NEAREST, GPU_NEAREST);
+    }
 }
 
 void ui_exit(void)
 {
     C2D_TextBufDelete(text_buf);
     C2D_TextBufDelete(tc_buf);
+    if (font_sheet) C2D_SpriteSheetFree(font_sheet);
 }
 
 void ui_frame_begin(void)
@@ -85,6 +142,9 @@ void ui_frame_begin(void)
 static float draw_plain(float x, float y, float size, u32 color, const char *s)
 {
     if (dbg_flag('t') || !*s) return 0;
+    // pixel font, unless the line would run off the screen (the system font is narrower)
+    if (font_usable(s) && x + font_width(s, font_scale(size)) <= sprites_scene_width())
+        return font_draw(x, y, font_scale(size), color, s);
     float w;
     const C2D_Text *t = get_text(s, &w);
     if (!t) return 0;
@@ -104,6 +164,7 @@ void ui_text(float x, float y, float size, u32 color, const char *fmt, ...)
 
 float ui_text_width(float size, const char *s)
 {
+    if (font_usable(s)) return font_width(s, font_scale(size));
     float w;
     if (!*s || !get_text(s, &w)) return 0;
     return w * size;
@@ -160,6 +221,58 @@ float ui_text_coded(float x, float y, float size, u32 base, const char *s)
         s++;
     }
     return x - x0;
+}
+
+// Coded text wrapped at word boundaries between left and right; starts at x on line y and
+// returns the number of lines used (1 or more). With draw false it only counts. *end_x: where
+// the text ended.
+int ui_text_coded_wrap(float x, float y, float left, float right, float line_h, float size, u32 base,
+                       const char *s, bool draw, float *end_x)
+{
+    int lines = 1;
+    u32 color = base;
+    char ch[2] = { 0, 0 };
+    float space = ui_text_width(size, "a");
+    while (*s) {
+        // one word: characters up to a space, colour codes applied as they come
+        const char *w = s;
+        float ww = 0;
+        u32 c = color;
+        while (*w && *w != ' ') {
+            u32 next;
+            int code = color_code(w, base, &next);
+            if (code) { c = next; w += code; continue; }
+            int len = ((u8)*w & 0xE0) == 0xC0 ? 2 : ((u8)*w & 0xF0) == 0xE0 ? 3 : 1;
+            char g[4] = { 0 };
+            memcpy(g, w, len);
+            ww += ui_text_width(size, g);
+            w += len;
+        }
+        if (x + ww > right && x > left) {
+            x = left;
+            y += line_h;
+            lines++;
+        }
+        while (s < w) {
+            u32 next;
+            int code = color_code(s, base, &next);
+            if (code) { color = next; s += code; continue; }
+            int len = ((u8)*s & 0xE0) == 0xC0 ? 2 : ((u8)*s & 0xF0) == 0xE0 ? 3 : 1;
+            char g[4] = { 0 };
+            memcpy(g, s, len);
+            if (draw) x += draw_plain(x, y, size, color, g);
+            else x += ui_text_width(size, g);
+            s += len;
+        }
+        (void)c;
+        while (*s == ' ') {
+            x += space;
+            s++;
+        }
+    }
+    (void)ch;
+    if (end_x) *end_x = x;
+    return lines;
 }
 
 void ui_strip_codes(const char *s, char *out, size_t size)

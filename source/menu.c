@@ -27,19 +27,25 @@ enum { TITLE_PLAY, TITLE_SERVER, TITLE_NICK, TITLE_PRACTICE, TITLE_ACHIEVEMENTS,
        TITLE_VIEWER, TITLE_COUNT };
 
 // Title pages
-enum { PAGE_MAIN, PAGE_SETTINGS, PAGE_ACHIEVEMENTS, PAGE_SHOP };
+enum { PAGE_MAIN, PAGE_SETTINGS, PAGE_ACHIEVEMENTS, PAGE_SHOP, PAGE_CONTROLS };
 static int page = PAGE_MAIN;
 static int set_sel;
 static float ach_scroll, ach_target;
 
-enum { SET_BACKGROUNDS, SET_PARALLAX, SET_EFFECTS, SET_WEATHER, SET_OVERLAYS, SET_PERF, SET_MUSIC, SET_SFX, SET_COUNT };
-static const char *SET_NAMES[SET_COUNT] = { "Backgrounds", "Parallax scrolling", "Effects", "Weather (rain, snow)",
-                                            "Screen overlays", "Show performance", "Music volume", "Sound volume" };
+enum { SET_CONTROLS, SET_LOOKAHEAD, SET_BACKGROUNDS, SET_PARALLAX, SET_EFFECTS, SET_WEATHER, SET_OVERLAYS, SET_PERF,
+       SET_MUSIC, SET_SFX, SET_COUNT };
+static const char *SET_NAMES[SET_COUNT] = { "Button mapping  >", "Camera look-ahead", "Backgrounds",
+                                            "Parallax scrolling", "Effects", "Weather (rain, snow)", "Screen overlays",
+                                            "Show performance", "Music volume", "Sound volume" };
 static const char *SET_HELP[SET_COUNT] = {
-    "Background layers behind the level.", "Backgrounds follow the camera at different speeds.",
-    "Dust, sparkles, ring shards and hit effects.", "Rain in Green Hill, snow in Nasty Paradise.",
-    "Vignette, red ring screen and similar full-screen layers.",
-    "Frame timings in game (bottom screen), to report slowdowns.", "", "",
+    "Choose the button for each action.",
+    "Camera looks ahead where you face.",
+    "Layers behind the level.",
+    "Depth scrolling of the backgrounds.",
+    "Dust, sparkles, shards, hit effects.",
+    "Rain, snow and similar particles.",
+    "Vignettes and full-screen overlays.",
+    "Frame timings on the bottom screen.", "", "",
 };
 
 static bool *set_flag(int i)
@@ -50,13 +56,77 @@ static bool *set_flag(int i)
     case SET_EFFECTS: return &settings.gfx_effects;
     case SET_WEATHER: return &settings.gfx_weather;
     case SET_OVERLAYS: return &settings.gfx_overlays;
+    case SET_LOOKAHEAD: return &settings.cam_lookahead;
     case SET_PERF: return &settings.show_perf;
     default: return NULL;
     }
 }
 
+// Button mapping: A picks an action, then the next button pressed is bound to it (an action
+// that had that button gets this one's old buttons). START resets, B goes back.
+static int ctl_sel;
+static bool ctl_waiting;
+
+static void controls_update(u32 down)
+{
+    if (ctl_waiting) {
+        u32 k = down & BIND_BUTTONS;
+        if (down & KEY_START) {
+            ctl_waiting = false;
+        } else if (k) {
+            k &= -k;  // one button
+            u32 old = settings.bind[ctl_sel];
+            for (int i = 0; i < BIND_COUNT; i++)
+                if (i != ctl_sel && (settings.bind[i] & k)) {
+                    settings.bind[i] &= ~k;
+                    if (!settings.bind[i]) settings.bind[i] = old;
+                }
+            settings.bind[ctl_sel] = k;
+            ctl_waiting = false;
+            audio_play(SND_MENU_SELECT);
+        }
+        return;
+    }
+    if (down & KEY_DOWN) ctl_sel = (ctl_sel + 1) % BIND_COUNT;
+    if (down & KEY_UP) ctl_sel = (ctl_sel + BIND_COUNT - 1) % BIND_COUNT;
+    if (down & KEY_A) {
+        ctl_waiting = true;
+        audio_play(SND_MENU_PRESS);
+    }
+    if (down & KEY_START) {
+        memcpy(settings.bind, BIND_DEFAULTS, sizeof settings.bind);
+        audio_play(SND_MENU_SELECT);
+    }
+    if (down & KEY_B) {
+        settings_save();
+        page = PAGE_SETTINGS;
+    }
+}
+
+static void draw_controls_bottom(void)
+{
+    ui_text(10, 6, 0.6f, UI_WHITE, "Button mapping");
+    for (int i = 0; i < BIND_COUNT; i++) {
+        float y = 32 + i * 20;
+        if (i == ctl_sel) C2D_DrawRectSolid(10, y - 3, 0, 300, 20, C2D_Color32(80, 20, 20, 255));
+        u32 col = i == ctl_sel ? UI_YELLOW : UI_WHITE;
+        ui_text(20, y, 0.5f, col, "%s", BIND_NAMES[i]);
+        if (i == ctl_sel && ctl_waiting) ui_text(180, y, 0.5f, UI_GREEN, "press a button...");
+        else ui_text(180, y, 0.5f, col, "%s", button_name(settings.bind[i]));
+    }
+    ui_text(10, 180, 0.42f, UI_GRAY, "Menus always use A = confirm, B = back.");
+    ui_text(10, 212, 0.42f, UI_GRAY, ctl_waiting ? "START: cancel" : "A: change   START: defaults   B: back");
+}
+
 static void settings_update(u32 down)
 {
+    if (set_sel == SET_CONTROLS && (down & KEY_A)) {
+        page = PAGE_CONTROLS;
+        ctl_sel = 0;
+        ctl_waiting = false;
+        audio_play(SND_MENU_PRESS);
+        return;
+    }
     if (down & KEY_DOWN) set_sel = (set_sel + 1) % SET_COUNT;
     if (down & KEY_UP) set_sel = (set_sel + SET_COUNT - 1) % SET_COUNT;
     bool *flag = set_flag(set_sel);
@@ -145,11 +215,11 @@ static void shop_update(u32 down)
 static void achievements_update(u32 held, u32 down)
 {
     const SpriteInfo *s = sprite_info(SPR_ACHIVEMENTS);
-    float list_h = s ? s->height * 0.74f : 0;
+    float list_h = s ? s->height : 0;
     if (held & KEY_UP) ach_target += 6;
     if (held & KEY_DOWN) ach_target -= 6;
     if (ach_target > 0) ach_target = 0;
-    if (ach_target < -(list_h - 200)) ach_target = -(list_h - 200);
+    if (ach_target < -(list_h - TOP_H)) ach_target = -(list_h - TOP_H);
     ach_scroll += (ach_target - ach_scroll) * 0.2f;
     if (down & KEY_B) {
         achiev_clear_new();
@@ -201,6 +271,10 @@ static void title_update(u32 held, u32 down)
 {
     if (page == PAGE_SETTINGS) {
         settings_update(down);
+        return;
+    }
+    if (page == PAGE_CONTROLS) {
+        controls_update(down);
         return;
     }
     if (page == PAGE_ACHIEVEMENTS) {
@@ -392,18 +466,17 @@ void menu_update(u32 held, u32 down)
 
 static void draw_room_centered(void)
 {
-    // Menu rooms are 480x270: shown whole, scaled to the 400 px width and letterboxed.
-    float sc = (float)TOP_W / level.room.width;
-    level.cam_x = level.cam_y = 0;
-    level.view_w = level.room.width;
-    level.view_h = level.room.height;
-    C2D_ViewReset();
-    C2D_ViewTranslate(0, (TOP_H - level.room.height * sc) / 2);
-    C2D_ViewScale(sc, sc);
-    level_draw();
-    C2D_ViewReset();
+    // Menu rooms are 480x270: shown 1:1 (pixel-perfect) around the centre; objects that would
+    // be cut by the edges (the mercoin counters, the corner buttons) are pulled inside.
+    level.cam_x = floorf(((float)level.room.width - TOP_W) / 2);
+    level.cam_y = floorf(((float)level.room.height - TOP_H) / 2);
+    if (level.cam_x < 0) level.cam_x = 0;
+    if (level.cam_y < 0) level.cam_y = 0;
     level.view_w = TOP_W;
     level.view_h = TOP_H;
+    level.gui_clamp = true;
+    level_draw();
+    level.gui_clamp = false;
 }
 
 static void dim_top(float alpha)
@@ -411,45 +484,56 @@ static void dim_top(float alpha)
     C2D_DrawRectSolid(0, 0, 0, TOP_W, TOP_H, C2D_Color32f(0, 0, 0, alpha));
 }
 
-static void draw_icon(int spr, float frame_idx, float x, float y)
+static void draw_icon(int spr, float frame_idx, float x, float y, u32 blend)
 {
     // Lobby icons are 24x24 with the origin in the centre.
-    sprite_draw(spr, frame_idx, x, y, 1, 1, 0, 0xFFFFFFFF, 1);
+    sprite_draw(spr, frame_idx, x, y, 1, 1, 0, blend, 1);
 }
 
-// The lobby row of player icons with names (obj_lobby_icon), on the top screen.
+// obj_lobby_icon: our icon in the middle (240, 115), the others in a row at y 58, 80 px apart
+// (positions scaled from the 480x270 room); ready players are tinted lime; names in the game's
+// sprite font, cut to the room between icons.
+static void draw_player_icon(int id, float x, float y, float room_w)
+{
+    bool me = id == net.id;
+    NetPlayer *p = me ? NULL : net_player(id);
+    if (!me && !p) return;
+    const char *nick = me ? settings.nickname : p->nickname;
+    int character = me ? net.my_character : p->character;
+    int exe_char = me ? net.my_exe_character : p->exe_character;
+    bool ready = me ? net.my_ready : p->ready;
+    u32 blend = net.state == NET_LOBBY && ready ? 0xFF00FF00 : 0xFFFFFFFF;
+    if (net.state == NET_CHARSELECT || net.state == NET_GAME) {
+        if (id == net.exe_id)
+            draw_icon(exe_char >= 0 && exe_char < 4 ? EXE_ICONS[exe_char] : SPR_LOBBY_EXEICON5,
+                      exe_char >= 0 ? frame * 0.25f : (me ? settings.lobby_icon : p->icon), x, y, 0xFFFFFFFF);
+        else
+            draw_icon(SPR_LOBBY_ICON, character > 0 ? character + 1 : 0, x, y, 0xFFFFFFFF);
+    } else {
+        draw_icon(SPR_LOBBY_DICON, me ? settings.lobby_icon : p->icon, x, y, blend);
+    }
+    char name[32];
+    snprintf(name, sizeof name, "%s", nick);
+    for (size_t n = strlen(name); n > 1 && text_spr_width(name) > room_w; n--) name[n - 1] = 0;
+    float w = text_spr_width(name);
+    text_spr(floorf(x - w / 2), y + 16, name, me ? 0x00FFFF : FONT_WHITE, 1);  // BGR: yellow for us
+}
+
 static void draw_player_row(float y)
 {
-    int ids[NET_MAX_PLAYERS + 1], n = 0;
-    ids[n++] = net.id;
-    for (int i = 0; i < NET_MAX_PLAYERS; i++)
-        if (net.players[i].used && net.players[i].id != net.id) ids[n++] = net.players[i].id;
-    float spacing = n > 1 ? (TOP_W - 60) / (float)(n - 1) : 0;
-    if (spacing > 56) spacing = 56;
-    float x0 = TOP_W / 2 - spacing * (n - 1) / 2;
-    for (int k = 0; k < n; k++) {
-        float x = x0 + spacing * k;
-        bool me = ids[k] == net.id;
-        NetPlayer *p = me ? NULL : net_player(ids[k]);
-        const char *nick = me ? settings.nickname : p->nickname;
-        int character = me ? net.my_character : p->character;
-        int exe_char = me ? net.my_exe_character : p->exe_character;
-        bool ready = me ? net.my_ready : p->ready;
-        if (net.state == NET_CHARSELECT || net.state == NET_GAME) {
-            if (ids[k] == net.exe_id)
-                draw_icon(exe_char >= 0 && exe_char < 4 ? EXE_ICONS[exe_char] : SPR_LOBBY_EXEICON5,
-                          exe_char >= 0 ? frame * 0.25f : (me ? settings.lobby_icon : p->icon), x, y);
-            else
-                draw_icon(SPR_LOBBY_ICON, character > 0 ? character + 1 : 0, x, y);
-        } else {
-            draw_icon(SPR_LOBBY_DICON, me ? settings.lobby_icon : p->icon, x, y);
-        }
-        ui_text_center(x, y + 14, 0.4f, me ? UI_YELLOW : UI_WHITE, "%.12s", nick);
-        if (net.state == NET_LOBBY && ready) ui_text_center(x, y - 28, 0.4f, UI_GREEN, "ready");
+    (void)y;
+    float sx = TOP_W / 480.0f, sy = TOP_H / 270.0f;
+    draw_player_icon(net.id, floorf(240 * sx), floorf(115 * sy), 120);
+    int i = 0;
+    for (int k = 0; k < NET_MAX_PLAYERS; k++) {
+        if (!net.players[k].used || net.players[k].id == net.id) continue;
+        draw_player_icon(net.players[k].id, floorf((40 + i * 80) * sx), floorf(58 * sy), 80 * sx - 4);
+        i++;
     }
 }
 
 static void menu_draw_top_inner(void);
+static void draw_achievements_top(void);
 
 void menu_draw_top(void)
 {
@@ -459,6 +543,10 @@ void menu_draw_top(void)
 
 static void menu_draw_top_inner(void)
 {
+    if (app_mode == APP_TITLE && page == PAGE_ACHIEVEMENTS) {
+        draw_achievements_top();
+        return;
+    }
     draw_room_centered();
     if (app_mode == APP_TITLE) {
         ui_text_center(TOP_W / 2, 214, 0.5f, UI_YELLOW, "Port made by PenguinEhis");
@@ -507,14 +595,29 @@ static void menu_draw_top_inner(void)
     }
 }
 
+// Chat, wrapped to the screen width: the newest messages that fit in max_lines
+static int chat_lines(int i, bool draw, float y)
+{
+    float x = 6;
+    char head[48];
+    snprintf(head, sizeof head, "%s: ", net.chat[i].sender);
+    int n = ui_text_coded_wrap(6, y, 6, BOT_W - 4, 13, 0.42f, UI_GRAY, head, draw, &x);
+    float yy = y + (n - 1) * 13;
+    return n - 1 + ui_text_coded_wrap(x, yy, 6, BOT_W - 4, 13, 0.42f, UI_WHITE, net.chat[i].text, draw, NULL);
+}
+
 static void draw_chat(float y0)
 {
-    for (int i = 0; i < net.chat_count; i++) {
-        float y = y0 + i * 13;
-        float x = 6 + ui_text_coded(6, y, 0.42f, UI_GRAY, net.chat[i].sender);
-        x += ui_text_coded(x, y, 0.42f, UI_GRAY, ": ");
-        ui_text_coded(x, y, 0.42f, UI_WHITE, net.chat[i].text);
+    const int max_lines = 8;  // the area of the old 8 one-line messages, bottom-aligned
+    int first = net.chat_count, used = 0;
+    while (first > 0) {
+        int n = chat_lines(first - 1, false, 0);
+        if (used + n > max_lines) break;
+        used += n;
+        first--;
     }
+    float y = y0 + (max_lines - used) * 13;
+    for (int i = first; i < net.chat_count; i++) y += chat_lines(i, true, y) * 13;
 }
 
 static void draw_title_bottom(void)
@@ -555,15 +658,16 @@ static void draw_settings_bottom(void)
 {
     ui_text(10, 6, 0.6f, UI_WHITE, "Settings");
     for (int i = 0; i < SET_COUNT; i++) {
-        float y = 28 + i * 20;
-        if (i == set_sel) C2D_DrawRectSolid(10, y - 3, 0, 300, 20, C2D_Color32(80, 20, 20, 255));
+        float y = 26 + i * 17;
+        if (i == set_sel) C2D_DrawRectSolid(10, y - 2, 0, 300, 17, C2D_Color32(80, 20, 20, 255));
         u32 col = i == set_sel ? UI_YELLOW : UI_WHITE;
-        ui_text(20, y, 0.5f, col, "%s", SET_NAMES[i]);
+        ui_text(20, y, 0.45f, col, "%s", SET_NAMES[i]);
         bool *flag = set_flag(i);
-        if (flag) ui_text(250, y, 0.5f, *flag ? UI_GREEN : UI_RED, "%s", *flag ? "On" : "Off");
-        else ui_text(235, y, 0.5f, col, "< %d >", i == SET_MUSIC ? settings.music_volume : settings.sfx_volume);
+        if (flag) ui_text(250, y, 0.45f, *flag ? UI_GREEN : UI_RED, "%s", *flag ? "On" : "Off");
+        else if (i == SET_MUSIC || i == SET_SFX)
+            ui_text(235, y, 0.45f, col, "< %d >", i == SET_MUSIC ? settings.music_volume : settings.sfx_volume);
     }
-    ui_text(10, 190, 0.42f, UI_GRAY, "%s", SET_HELP[set_sel]);
+    ui_text(10, 196, 0.4f, UI_GRAY, "%s", SET_HELP[set_sel]);
     ui_text(10, 212, 0.45f, UI_GRAY, "A / Left / Right: change   B: back");
 }
 
@@ -572,7 +676,7 @@ static void draw_shop_bottom(void)
     ui_text(10, 4, 0.5f, UI_WHITE, "L < %s > R", SHOP_TAB_NAMES[shop_tab]);
     ui_text(200, 4, 0.5f, UI_YELLOW, "%llu mercoins", (unsigned long long)achiev.mercoins);
     int n = shop_count(), cols = shop_tab == SHOP_ICONS ? 5 : 4;
-    float cw = BOT_W / (float)cols, ch = shop_tab == SHOP_ICONS ? 36 : 70;
+    float cw = BOT_W / (float)cols, ch = shop_tab == SHOP_ICONS ? 36 : shop_tab == SHOP_TAUNTS ? 76 : 70;
     for (int i = 0; i < n; i++) {
         float x = (i % cols) * cw, y = 24 + (i / cols) * ch;
         bool owned = shop_owned(i);
@@ -584,12 +688,12 @@ static void draw_shop_bottom(void)
         } else {
             int spr = shop_tab == SHOP_TAUNTS ? TAUNT_SPRITES[i] : PET_SPRITES[i];
             const SpriteInfo *s = sprite_info(spr);
-            float sc = s && s->height > 48 ? 48.0f / s->height : 1;
-            if (s) sprite_draw(spr, 0, x + cw / 2 - (s->width / 2 - s->xorigin) * sc, y + 4 + s->yorigin * sc, sc, sc, 0,
+            float sc = 1;  // 1:1 (pixel-perfect); the tallest, Exeller's taunt, is 55 px
+            if (s) sprite_draw(spr, 0, x + cw / 2 - (s->width / 2 - s->xorigin) * sc, y + 2 + s->yorigin * sc, sc, sc, 0,
                                0xFFFFFFFF, owned ? 1 : 0.5f);
             if (shop_tab == SHOP_PETS) ui_text_center(x + cw / 2, y + ch - 30, 0.38f, UI_WHITE, "%s", PET_NAMES[i]);
         }
-        const char *state = equipped ? "equipped" : owned ? (shop_tab == SHOP_TAUNTS ? "owned" : "equip") : NULL;
+        const char *state = equipped ? "on" : owned ? (shop_tab == SHOP_TAUNTS ? "owned" : "equip") : NULL;
         if (state) ui_text_center(x + cw / 2, y + ch - 16, 0.36f, equipped ? UI_GREEN : UI_GRAY, "%s", state);
         else ui_text_center(x + cw / 2, y + ch - 16, 0.36f, UI_YELLOW, "%d", shop_price(i));
     }
@@ -597,27 +701,45 @@ static void draw_shop_bottom(void)
     ui_text(10, 222, 0.42f, UI_GRAY, "A: buy / equip   L / R: tab   B: back");
 }
 
-static void draw_achievements_bottom(void)
+// obj_menu_achivements: the 50 rows of spr_achivements (428 x 38 each) on the top screen at 1:1.
+// 428 px does not fit 400: the reward column (from x 320) is drawn flush right over the empty
+// end of the description boxes.
+static void draw_achievements_top(void)
 {
-    // obj_menu_achivements: the 50 rows of spr_achivements (428 x 38 each), scaled to fit
-    const float sc = 0.74f, row = 38 * sc;
-    float x0 = (BOT_W - 428 * sc) / 2;
-    sprite_draw(SPR_ACHIVEMENTS, 0, x0, ach_scroll, sc, sc, 0, 0xFFFFFFFF, 1);
+    const float row = 38;
+    float y0 = floorf(ach_scroll);
+    C2D_DrawRectSolid(0, 0, 0, TOP_W, TOP_H, C2D_Color32(0, 0, 0, 255));
+    sprite_draw_part(SPR_ACHIVEMENTS, 0, 0, y0, 0, 320);
+    sprite_draw_part(SPR_ACHIVEMENTS, 0, TOP_W - 428, y0, 320, 432);
     for (int i = 0; i < ACHIEV_COUNT; i++) {
-        float y = ach_scroll + i * row;
-        if (y < -row || y > BOT_H) continue;
-        if (achiev.achieved[i]) C2D_DrawRectSolid(x0, y, 0, 428 * sc, row - 1, C2D_Color32(15, 255, 57, 60));
+        float y = y0 + i * row;
+        if (y < -row || y > TOP_H) continue;
+        if (achiev.achieved[i]) C2D_DrawRectSolid(0, y, 0, TOP_W, row - 1, C2D_Color32(15, 255, 57, 60));
     }
     for (int j = 0; j < achiev.changed_count; j++)
-        sprite_draw(SPR_ACHIVEMENTS_NEW, 0, x0, ach_scroll + achiev.changed[j] * row, sc, sc, 0, 0xFFFFFFFF, 1);
-    C2D_DrawRectSolid(0, 222, 0, BOT_W, 18, C2D_Color32(16, 16, 24, 255));
-    ui_text(10, 224, 0.42f, UI_GRAY, "Up / Down: scroll   B: back");
+        sprite_draw(SPR_ACHIVEMENTS_NEW, 0, 0, y0 + achiev.changed[j] * row, 1, 1, 0, 0xFFFFFFFF, 1);
+}
+
+static void draw_achievements_bottom(void)
+{
+    int earned = 0;
+    for (int i = 0; i < ACHIEV_COUNT; i++) earned += achiev.achieved[i];
+    ui_text(10, 8, 0.6f, UI_WHITE, "Achievements");
+    ui_text(10, 44, 0.5f, UI_GREEN, "%d of %d earned", earned, ACHIEV_COUNT);
+    ui_text(10, 64, 0.5f, UI_YELLOW, "%llu mercoins", (unsigned long long)achiev.mercoins);
+    if (achiev.changed_count) ui_text(10, 84, 0.5f, UI_WHITE, "%d new", achiev.changed_count);
+    ui_text(10, 120, 0.45f, UI_GRAY, "Earned ones are marked green.");
+    ui_text(10, 214, 0.45f, UI_GRAY, "Up / Down: scroll   B: back");
 }
 
 void menu_draw_bottom(void)
 {
     if (app_mode == APP_TITLE && page == PAGE_SETTINGS) {
         draw_settings_bottom();
+        return;
+    }
+    if (app_mode == APP_TITLE && page == PAGE_CONTROLS) {
+        draw_controls_bottom();
         return;
     }
     if (app_mode == APP_TITLE && page == PAGE_ACHIEVEMENTS) {
@@ -665,9 +787,9 @@ void menu_draw_bottom(void)
             int count = exe ? 4 : 6;
             for (int i = 1; i <= count; i++) {
                 float x = 30 + (i - 1) * 50;
-                if (exe) draw_icon(EXE_ICONS[i - 1], frame * 0.25f, x, 50);
-                else draw_icon(SPR_LOBBY_ICON, i + 1, x, 50);
-                if (!exe && !net.av_characters[i]) draw_icon(SPR_LOBBY_ICON_USED, 0, x, 50);
+                if (exe) draw_icon(EXE_ICONS[i - 1], frame * 0.25f, x, 50, 0xFFFFFFFF);
+                else draw_icon(SPR_LOBBY_ICON, i + 1, x, 50, 0xFFFFFFFF);
+                if (!exe && !net.av_characters[i]) draw_icon(SPR_LOBBY_ICON_USED, 0, x, 50, 0xFFFFFFFF);
                 if (i == char_sel) C2D_DrawRectSolid(x - 14, 66, 0, 28, 2, UI_YELLOW);
             }
             ui_text(10, 72, 0.5f, UI_YELLOW, "%s  (A: choose)", exe ? EXE_NAMES[(char_sel - 1) & 3]

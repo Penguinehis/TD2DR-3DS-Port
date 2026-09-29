@@ -23,6 +23,8 @@ float ui_text_width(float size, const char *s);
 
 // Text with the server's colour codes: \ red, @ green, & purple, / blue, | gray,
 // ` yellow, U+2116 orange, ~ reset to base. Returns the drawn width.
+int ui_text_coded_wrap(float x, float y, float left, float right, float line_h, float size, u32 base,
+                       const char *s, bool draw, float *end_x);
 float ui_text_coded(float x, float y, float size, u32 base, const char *s);
 // Strip the colour codes (for measuring or logging).
 void ui_strip_codes(const char *s, char *out, size_t size);

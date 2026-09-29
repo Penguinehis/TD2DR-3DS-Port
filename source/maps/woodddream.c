@@ -194,10 +194,10 @@ static void weed_draw_gui(MapObj *o)
     if (wz.weed_anim >= 0) {
         float t = current_time_ms();
         float x = -10 + sinf(t / 300) * 8 + rnd(-2, 2), y = -10 + cosf(t / 300) * 8 + rnd(-2, 2);
-        sprite_draw(SPR_WEED_ARMS, wz.weed_anim, x * GUI_SX, y * GUI_SY, GUI_SX, GUI_SY, 0, 0xFFFFFFFF, 1);
+        sprite_draw_smooth(SPR_WEED_ARMS, wz.weed_anim, x * GUI_SX, y * GUI_SY, GUI_SX, GUI_SY, 0xFFFFFFFF, 1);
     }
     if (wz.weed_progress > 0)
-        sprite_draw(SPR_WEED_VINJETK, 0, 0, 0, GUI_SX, GUI_SY, 0, 0xFFFFFFFF, wz.weed_progress);
+        sprite_draw_smooth(SPR_WEED_VINJETK, 0, 0, 0, GUI_SX, GUI_SY, 0xFFFFFFFF, wz.weed_progress);
 }
 
 // ------------------------------------------------------------------ obj_weed_ghost / 2

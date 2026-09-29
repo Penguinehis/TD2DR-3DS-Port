@@ -218,7 +218,7 @@ static void prof_add(float *acc, float ms) { *acc = *acc * 0.9f + ms * 0.1f; }
 
 void main_draw_perf(float x, float y)
 {
-    ui_text(x, y, 0.42f, UI_WHITE, "upd %.1f  top %.1f  bot %.1f  gpu %.1f ms  quads %d  tex %d", prof_update, prof_top,
+    ui_text(x, y, 0.42f, UI_WHITE, "cpu %.1f+%.1f+%.1f gpu %.1f  q%d t%d", prof_update, prof_top,
             prof_bottom, prof_gpu, sprite_stat_quads, sprite_stat_switches);
 }
 
@@ -263,10 +263,10 @@ static void offline_draw_bottom(void)
 {
     const Player *p = &level.player;
     ui_text(8, 8, 0.6f, UI_WHITE, "%s  (%d/%d)", room_name(level.room_id), level.room_id + 1, RM_COUNT);
-    ui_text(8, 28, 0.5f, UI_WHITE, "room %lux%lu  layers %d  instances %d", level.room.width, level.room.height,
+    ui_text(8, 28, 0.5f, UI_WHITE, "%lux%lu  %d layers  %d objects", level.room.width, level.room.height,
             level.room.layer_count, level_count_instances());
     ui_text(8, 44, 0.5f, UI_WHITE, "camera %.0f, %.0f", level.cam_x, level.cam_y);
-    ui_text(8, 60, 0.5f, UI_WHITE, "%.0f fps  sheets %d  linear free %.1f MB  %s", fps, sprites_loaded_sheets(),
+    ui_text(8, 60, 0.5f, UI_WHITE, "%.0f fps  %d sheets  %.1f MB free %s", fps, sprites_loaded_sheets(),
             sprites_linear_free() / 1048576.0f, is_new3ds ? "New3DS" : "Old3DS");
     main_draw_perf(8, 140);
     if (level.has_player) {
@@ -275,10 +275,18 @@ static void offline_draw_bottom(void)
         ui_text(8, 116, 0.5f, UI_WHITE, "angle %.0f  %s%s%s", p->angle * 57.2958f, p->isGrounded ? "ground " : "air ",
                 p->isFlying ? "fly " : "", p->isHiding ? "hidden" : "");
     }
-    ui_text(8, 164, 0.45f, UI_WHITE, "%s", level.has_player ? "Move: Circle Pad/D-Pad   A: jump   B: special"
-                                                               : "Circle Pad/D-Pad: move camera   B: fast");
-    ui_text(8, 180, 0.45f, UI_WHITE, "L / R / ZL: emotions   Y: C");
-    ui_text(8, 196, 0.45f, UI_WHITE, "SELECT+L/R: room   SELECT+Y: hidden objects %s", level.show_hidden ? "ON" : "off");
+    if (level.has_player) {
+        // button_name uses one static buffer: one name per call
+        char jump[24], special[24], ability[24];
+        snprintf(jump, sizeof jump, "%s", button_name(settings.bind[BIND_JUMP]));
+        snprintf(special, sizeof special, "%s", button_name(settings.bind[BIND_SPECIAL]));
+        snprintf(ability, sizeof ability, "%s", button_name(settings.bind[BIND_ABILITY]));
+        ui_text(8, 164, 0.45f, UI_WHITE, "Pad: move  %s: jump  %s: special", jump, special);
+        ui_text(8, 180, 0.45f, UI_WHITE, "%s: C ability   L/R/ZL: emotions", ability);
+    } else {
+        ui_text(8, 164, 0.45f, UI_WHITE, "Pad: move camera   B: fast");
+    }
+    ui_text(8, 196, 0.45f, UI_WHITE, "SEL+L/R: room  SEL+Y: hidden %s", level.show_hidden ? "ON" : "off");
     ui_text(8, 212, 0.45f, UI_WHITE, "START: back to the title");
 }
 
@@ -359,7 +367,7 @@ int main(void)
 
         net_poll();
         if (net.state != last_net) {
-            dbg_log("net state %d -> %d (players %d)", last_net, net.state, net_player_count());
+            dbg_log("net state %d -> %d (players %d) at frame %lu", last_net, net.state, net_player_count(), frame_no);
             last_net = net.state;
         }
         // The match runs while the server is in the game, and through the results screen.
@@ -390,6 +398,11 @@ int main(void)
         if (app_mode == APP_OFFLINE) {
             level_draw();
             mapobj_draw_gui();
+            if (dbg_flag('T')) {  // colour test after sprites
+                ui_text(10, 10, 0.5f, UI_RED, "RED TEXT");
+                ui_text(10, 30, 0.5f, UI_GREEN, "GREEN TEXT");
+                C2D_DrawRectSolid(10, 50, 0, 40, 10, UI_YELLOW);
+            }
         }
         else if (in_match) game_draw_top();
         else menu_draw_top();
