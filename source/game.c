@@ -110,6 +110,7 @@ static struct {
     int surv_target;       // puppet id revealed by an Eggman tracker, -1 none
     // global.cameraMode: 0 follow, 2 spectate, 3 wait 3 s then spectate
     int cam_mode, cam_timer, spectate;
+    float spec_x, spec_y;  // the spectator camera (its own: level_update puts level.cam on our body)
     // obj_level GUI
     float blood_fade, hide_fade, title_card, card_x, card_y, clock_angle;
     int time_frame;
@@ -656,6 +657,8 @@ static void spectate_camera(u32 down)
     if (g.cam_mode == 3 && --g.cam_timer <= 0) {
         g.cam_mode = 2;
         g.spectate = -1;
+        g.spec_x = level.cam_x;
+        g.spec_y = level.cam_y;
     }
     if (g.cam_mode != 2) return;
     if (g.spectate < 0 || !spectatable(&g.puppets[g.spectate]) || (down & (KEY_A | KEY_B | KEY_L | KEY_R))) {
@@ -668,12 +671,16 @@ static void spectate_camera(u32 down)
     }
     if (g.spectate < 0) return;
     const Puppet *t = &g.puppets[g.spectate];
+    // centred on the watched player, easing there (obj_camera mode 2); kept apart from level.cam,
+    // which level_update resets to our own body every frame
     float tx = floorf(t->x) - TOP_W / 2, ty = floorf(t->y) - TOP_H / 2;
-    level.cam_x = fabsf(tx - level.cam_x) > 10 ? level.cam_x + (tx - level.cam_x) * 0.5f : tx;
-    level.cam_y = fabsf(ty - level.cam_y) > 10 ? level.cam_y + (ty - level.cam_y) * 0.5f : ty;
+    g.spec_x = fabsf(tx - g.spec_x) > 10 ? g.spec_x + (tx - g.spec_x) * 0.5f : tx;
+    g.spec_y = fabsf(ty - g.spec_y) > 10 ? g.spec_y + (ty - g.spec_y) * 0.5f : ty;
     float max_x = (float)level.room.width - TOP_W, max_y = (float)level.room.height - TOP_H;
-    level.cam_x = floorf(fmaxf(0, fminf(level.cam_x, max_x)));
-    level.cam_y = floorf(fmaxf(0, fminf(level.cam_y, max_y)));
+    g.spec_x = fmaxf(0, fminf(g.spec_x, max_x));
+    g.spec_y = fmaxf(0, fminf(g.spec_y, max_y));
+    level.cam_x = floorf(g.spec_x);
+    level.cam_y = floorf(g.spec_y);
 }
 
 static void tracker_reveal(u16 target)

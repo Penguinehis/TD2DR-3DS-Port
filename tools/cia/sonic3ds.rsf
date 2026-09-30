@@ -27,6 +27,11 @@ AccessControlInfo:
   FileSystemAccess:
     - DirectSdmc
   IoAccessControl:
+  # Memory the 3dsx gets from the Homebrew Launcher: without the DSP mapping the sound
+  # library (ndsp) crashes at startup
+  MemoryMapping:
+    - 0x1FF00000-0x1FF7FFFF   # DSP memory
+    - 0x1F000000-0x1F5FFFFF:r # VRAM
   MemoryType              : Application
   # Old 3DS: 80 MB application mode (more linear memory for the big levels);
   # New 3DS: 124 MB mode and the faster CPU.
