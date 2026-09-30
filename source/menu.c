@@ -362,6 +362,13 @@ static void auto_play(void)
     }
 }
 
+// Chat in the menus: the mapped chat button, unless it is A or B (confirm / back here): X
+static u32 menu_chat_key(void)
+{
+    u32 k = settings.bind[BIND_CHAT] & ~(KEY_A | KEY_B);
+    return k ? k : KEY_X;
+}
+
 static void online_update(u32 down)
 {
     if (dbg_flag('x')) auto_play();
@@ -378,6 +385,11 @@ static void online_update(u32 down)
         if (down & KEY_B) {
             net_disconnect();
             menu_enter_title();
+            return;
+        }
+        if (net.state == NET_WAITING && (down & menu_chat_key())) {  // chat while a match runs
+            char msg[96];
+            if (ui_keyboard("Chat message", NULL, msg, sizeof msg, 80)) net_send_chat(msg);
         }
         return;
     case NET_LOBBY:
@@ -404,7 +416,7 @@ static void online_update(u32 down)
     default:
         break;
     }
-    if (down & KEY_X) {
+    if (down & menu_chat_key()) {
         char msg[96];
         if (ui_keyboard("Chat message", NULL, msg, sizeof msg, 80)) net_send_chat(msg);
     }
@@ -754,7 +766,8 @@ void menu_draw_bottom(void)
         draw_title_bottom();
         return;
     }
-    const char *hint = "X: chat   B twice: leave";
+    char hint[48];
+    snprintf(hint, sizeof hint, "%s: chat   B twice: leave", button_name(menu_chat_key()));
     switch (net.state) {
     case NET_CONNECTING:
         ui_text(10, 10, 0.55f, UI_WHITE, "Connecting to %s:%u...", net.host, net.port);
@@ -766,7 +779,8 @@ void menu_draw_bottom(void)
             ui_text(10, 30, 0.5f, UI_YELLOW, "time left %d:%02d", (net.wait_timer + 59) / 3600,
                     ((net.wait_timer + 59) / 60) % 60);
         draw_chat(60);
-        ui_text(10, 212, 0.45f, UI_GRAY, "B: leave");
+        ui_text(10, 212, 0.45f, UI_GRAY, net.state == NET_WAITING ? "%s: chat   B: leave" : "B: leave",
+                button_name(menu_chat_key()));
         return;
     case NET_LOBBY:
         ui_text(10, 6, 0.5f, UI_WHITE, "Lobby  %d players  exe chance %u%%", net_player_count() + 1, net.exe_chance);

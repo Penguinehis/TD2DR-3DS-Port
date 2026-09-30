@@ -290,7 +290,18 @@ static u8 net_flags(const Player *p)
     return flags;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    float prog = 1.0f - fminf(p->attackTimer, 180) / 180.0f;
+    gui_ability(SPR_GUI_EXEATTACK, 0, prog, 10, 240, prog >= 1);
+    gui_exe_freejump(p, true);
+    prog = fminf(p->invisTimer, 0) / (float)EXE_INVIS_RECHARGE;
+    gui_ability(SPR_GUI_EXEINVISABILITY, 0, prog, 4, 250, prog >= 1);
+}
+
 const CharDef CHAR_EXE_DEF = {
+    .draw_gui = draw_gui,
     .name = "exe",
     .init = init,
     .special = special,

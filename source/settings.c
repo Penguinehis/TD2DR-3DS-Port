@@ -41,6 +41,7 @@ void settings_load(void)
     if (!n3ds) settings.gfx_parallax = settings.gfx_weather = false;
     settings.music_volume = settings.sfx_volume = 10;
     settings.cam_lookahead = true;
+    settings.show_hud = true;
     memcpy(settings.bind, BIND_DEFAULTS, sizeof settings.bind);
 
     FILE *f = fopen(SETTINGS_PATH, "r");
@@ -63,6 +64,7 @@ void settings_load(void)
         else if (!strcmp(key, "gfx_overlays")) settings.gfx_overlays = atoi(val);
         else if (!strcmp(key, "show_perf")) settings.show_perf = atoi(val);
         else if (!strcmp(key, "cam_lookahead")) settings.cam_lookahead = atoi(val);
+        else if (!strcmp(key, "show_hud")) settings.show_hud = atoi(val);
         else if (!strncmp(key, "bind", 4) && atoi(key + 4) >= 0 && atoi(key + 4) < BIND_COUNT) {
             u32 k = (u32)strtoul(val, NULL, 16) & BIND_BUTTONS;
             if (k) settings.bind[atoi(key + 4)] = k;

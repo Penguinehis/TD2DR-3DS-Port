@@ -10,6 +10,9 @@
 #include <math.h>
 
 #include "audio.h"
+#include "font.h"
+#include "settings.h"
+#include "ui.h"
 #include "chars/chars.h"
 #include "net.h"
 #include "gen/anims.h"
@@ -110,6 +113,133 @@ void player_init(Player *p, int character, int exe_character, float x, float y)
     if (character == CHARACTER_EXE) achiev_taunts_for(p->exe_character, &p->taunt1, &p->taunt2);
     int spr = player_anim_sprite(p);
     p->sprite = spr >= 0 ? spr : SPR_TAILS_IDLE;
+}
+
+// ------------------------------------------------------------------ GUI (Draw_64, obj_playerui)
+
+// The GUI icons carry the PC key (Z jump, X special, C ability) after the picture: that letter
+// (its rect in the frame) is replaced with the 3DS button from settings.bind, the rest of the
+// sprite (arrows, "+") shifted to make room.
+typedef struct { int spr; u8 x0, x1, y0, y1; u8 bind; } GuiKey;
+static const GuiKey GUI_KEYS[] = {
+    { SPR_GUI_AMYATTACK, 25, 33, 5, 14, BIND_SPECIAL },
+    { SPR_GUI_AMYHJUMP, 33, 41, 1, 10, BIND_JUMP },
+    { SPR_GUI_CHAOSATTACK, 21, 29, 3, 12, BIND_SPECIAL },
+    { SPR_GUI_CHAOSSLIME, 20, 28, 3, 12, BIND_ABILITY },
+    { SPR_GUI_CHAOSWALLDASH, 21, 29, 3, 12, BIND_SPECIAL },
+    { SPR_GUI_CREAMDASH, 23, 31, 2, 11, BIND_SPECIAL },
+    { SPR_GUI_CREAMFLY, 27, 35, 6, 15, BIND_JUMP },
+    { SPR_GUI_CREAMRINGS, 23, 31, 2, 11, BIND_ABILITY },
+    { SPR_GUI_EGGDJUMP, 22, 30, 3, 12, BIND_JUMP },
+    { SPR_GUI_EGGSHIELD, 22, 30, 0, 9, BIND_SPECIAL },
+    { SPR_GUI_EGGTRACK, 39, 47, 1, 10, BIND_ABILITY },
+    { SPR_GUI_EXEATTACK, 21, 29, 0, 9, BIND_SPECIAL },
+    { SPR_GUI_EXEFREEJUMP, 28, 36, 6, 15, BIND_JUMP },
+    { SPR_GUI_EXEINVISABILITY, 27, 35, 5, 14, BIND_ABILITY },
+    { SPR_GUI_EXELLERCLONE, 22, 30, 5, 14, BIND_ABILITY },
+    { SPR_GUI_EXELLERCLONE2, 48, 56, 2, 11, BIND_ABILITY },
+    { SPR_GUI_EXETIORATTACK, 21, 29, 0, 9, BIND_SPECIAL },
+    { SPR_GUI_EXETIORRING, 22, 30, 3, 12, BIND_ABILITY },
+    { SPR_GUI_KNUXATTACK, 21, 29, 0, 9, BIND_SPECIAL },
+    { SPR_GUI_KNUXGLIDE, 25, 33, 3, 12, BIND_JUMP },
+    { SPR_GUI_SALLYATTACK, 20, 28, 1, 10, BIND_SPECIAL },
+    { SPR_GUI_SALLYSHIELD, 21, 29, 1, 10, BIND_ABILITY },
+    { SPR_GUI_TAILSATTACK, 26, 34, 2, 10, BIND_SPECIAL },
+    { SPR_GUI_TAILSFLY, 28, 36, 0, 9, BIND_JUMP },
+};
+
+// first button of a binding ("ZL / ZR" -> "ZL")
+static void bind_label(int bind, char *out, size_t size)
+{
+    snprintf(out, size, "%s", button_name(settings.bind[bind]));
+    char *sp = strchr(out, ' ');
+    if (sp) *sp = 0;
+}
+
+// the key text: pixel font, its capitals lined up with the sprite's letter (cap top at +3)
+static float gui_key_text(float x, float y_cap, const char *label, u32 blend, float alpha)
+{
+    u32 a = (u32)(alpha * 255.0f + 0.5f);
+    u32 col = blend == 0xFFFFFFFF ? C2D_Color32(255, 255, 255, a) : C2D_Color32(255, 0, 0, a);
+    ui_text(x, y_cap - 3, 0.5f, col, "%s", label);
+    return ui_text_width(0.5f, label);
+}
+
+void gui_ability(int spr, int frame, float prog, float slide, float gui_y, bool ready)
+{
+    if (prog < 0) prog = 0;
+    if (prog > 1) prog = 1;
+    if (prog <= 0) return;
+    u32 blend = ready ? 0xFFFFFFFF : 0xFF0000FF;  // c_white / c_red
+    float x = prog * slide, y = gui_y - 30;
+    const SpriteInfo *s = sprite_info(spr);
+    const GuiKey *k = NULL;
+    for (unsigned i = 0; i < sizeof GUI_KEYS / sizeof *GUI_KEYS; i++)
+        if (GUI_KEYS[i].spr == spr) k = &GUI_KEYS[i];
+    if (!k || !s || s->mode != SPRITE_NORMAL) {
+        sprite_draw(spr, frame, x, y, 1, 1, 0, blend, prog);
+        return;
+    }
+    char label[8];
+    bind_label(k->bind, label, sizeof label);
+    float left = x - s->xorigin, top = y - s->yorigin;
+    sprite_draw_sub(spr, frame, x, y, 0, 0, k->x0, s->height, blend, prog);
+    float tw = gui_key_text(floorf(left + k->x0), top + k->y0, label, blend, prog);
+    float shift = floorf(tw + 1 - (k->x1 - k->x0));
+    sprite_draw_sub(spr, frame, x + shift, y, k->x1, 0, s->width, s->height, blend, prog);
+    // Tails: "<HOLD>" runs under the key letter
+    if (spr == SPR_GUI_TAILSATTACK) sprite_draw_sub(spr, frame, x, y, k->x0, k->y1, k->x1, s->height, blend, prog);
+}
+
+void gui_exe_freejump(const Player *p, bool usable)
+{
+    bool prog = player_controls && p->isJumping;
+    sprite_draw(SPR_GUI_EXEFREEJUMP, 0, 3, 218 - 30, 1, 1, 0, prog && usable ? 0xFFFFFFFF : 0xFF0000FF,
+                usable ? (prog ? 1 : 0.5f) : 0);
+}
+
+// Survivors' Draw_64: hp meter (and ring count) over the head
+static void draw_head_hp(const Player *p, float cam_x, float cam_y)
+{
+    static const int OFFSET[7] = { 20, 20, 25, 36, 25, 20, 25 };  // exe tails knux egg amy cream sally
+    if (p->character == CHARACTER_EXE) {
+        if (p->isSlow) sprite_draw(SPR_FROZEN, 0, ceilf(p->x - cam_x), ceilf(p->y - cam_y) - 20, 1, 1, 0, 0xFFFFFFFF, 1);
+        return;
+    }
+    if (p->hp <= 0) return;
+    int off = OFFSET[p->character >= 0 && p->character < 7 ? p->character : 1];
+    int frame = p->hp >= 100 ? 5 : p->hp >= 75 ? 4 : p->hp >= 50 ? 3 : p->hp >= 25 ? 2 : 1;
+    u32 colour = player_room_id == ROOM_ACT9 ? 0xFF404040 : 0xFFFFFFFF;  // c_dkgray in Act 9
+    float x = ceilf(p->x - cam_x), y = ceilf(p->y - cam_y) - off;
+    sprite_draw(p->redRingTimer > 0 ? SPR_HP_RR : SPR_HP, p->revivalTimes == 2 ? 0 : frame, x, y, 1, 1, 0, colour, 1);
+    if (p->isSlow) sprite_draw(SPR_FROZEN, 0, x, y, 1, 1, 0, 0xFFFFFFFF, 1);
+    if (p->revivalTimes < 2) {
+        char n[16];
+        snprintf(n, sizeof n, "%d", p->rings);
+        number_spr(x - 2, y - 12, n, colour & 0xFFFFFF, 1);
+    }
+}
+
+void player_draw_gui(const Player *p, float cam_x, float cam_y)
+{
+    if (!p || p->isDead) return;
+    draw_head_hp(p, cam_x, cam_y);
+    if (p->def && p->def->draw_gui) p->def->draw_gui(p);
+    // spr_gui_emotions at GUI (470, 222): right-bottom anchored
+    if (p->character != CHARACTER_EXE && (p->state == ST_IDLE || p->emotion)) {
+        // the three emotion faces with their buttons (the sprite shows A / S / D)
+        static const int ROW_Y[3] = { 2, 16, 30 };
+        float x = 470 - 80, y = 222 - 30;
+        const SpriteInfo *s = sprite_info(SPR_GUI_EMOTIONS);
+        if (s) {
+            sprite_draw_sub(SPR_GUI_EMOTIONS, 0, x, y, 0, 0, 20, s->height, 0xFFFFFFFF, 1);
+            for (int i = 0; i < 3; i++) {
+                char label[8];
+                bind_label(BIND_EMOTE1 + i, label, sizeof label);
+                gui_key_text(x - s->xorigin + 20, y - s->yorigin + ROW_Y[i], label, 0xFFFFFFFF, 1);
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------ hurt

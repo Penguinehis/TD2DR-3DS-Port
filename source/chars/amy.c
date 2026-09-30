@@ -215,7 +215,19 @@ static void on_demonize(Player *p)
     v->hjumpTimer = 0;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const AmyVars *v = CHAR_VARS_C(p, AmyVars);
+    float prog = 1.0f - fmaxf(v->hjumpTimer, 0) / (float)AMY_BIGJUMP_RECHARGE;
+    gui_ability(SPR_GUI_AMYHJUMP, 0, prog, 10, 240, prog >= 1);
+    int val = p->revivalTimes >= 2 ? AMY_EXEATTACK_RECHARGE : AMY_ATTACK_RECHARGE;
+    prog = 1.0f - fmaxf(p->attackTimer, 0) / (float)val;
+    gui_ability(SPR_GUI_AMYATTACK, 0, prog, 10, 258, prog >= 1);
+}
+
 const CharDef CHAR_AMY_DEF = {
+    .draw_gui = draw_gui,
     .on_demonize = on_demonize,
     .name = "amy",
     .init = init,

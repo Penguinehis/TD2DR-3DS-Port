@@ -54,10 +54,17 @@ typedef struct CharDef {
     float base_acc, base_maxspeed;
     // CLIENT_PLAYER_DATA bit flags beyond PLAYER_EFFECT/HURT/REDRING (e.g. attacking)
     u8 (*net_flags)(const Player *p);
+    void (*draw_gui)(const Player *p);   // obj_playerui: the ability cooldown icons
 } CharDef;
 
 // Typed view of p->vars for a character file: CHAR_VARS(p, KnuxVars)->glideTimer
 #define CHAR_VARS(p, T) ((T *)(void *)(p)->vars)
+
+// obj_playerui: an ability icon at GUI (prog * slide, gui_y) of the 480x270 GUI (bottom-left
+// anchored), fading and sliding in while it recharges, red until ready.
+void gui_ability(int spr, int frame, float prog, float slide, float gui_y, bool ready);
+// the EXEs' free-jump icon (spr_gui_exefreejump)
+void gui_exe_freejump(const Player *p, bool usable);
 #define CHAR_VARS_C(p, T) ((const T *)(const void *)(p)->vars)
 
 extern const CharDef CHAR_TAILS_DEF, CHAR_KNUX_DEF, CHAR_EGGMAN_DEF, CHAR_AMY_DEF, CHAR_CREAM_DEF,

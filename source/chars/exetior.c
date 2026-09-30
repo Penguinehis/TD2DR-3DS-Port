@@ -365,7 +365,6 @@ static void draw(const Player *p, float cam_x, float cam_y)
                 0xFFFFFFFF, alpha);
 
     // Draw_64
-    if (p->isSlow) sprite_draw(SPR_FROZEN, 0, ceilf(p->x - cam_x), ceilf(p->y - cam_y) - 20, 1, 1, 0, 0xFFFFFFFF, 1);
 }
 
 // scr_move_basic: isHurt switch
@@ -397,7 +396,19 @@ static bool hurt_blocked(Player *p, int damage)
 
 static u8 net_flags(const Player *p) { return p->isAttacking ? NETF_ATTACKING : 0; }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const ExetiorVars *v = CHAR_VARS_C(p, ExetiorVars);
+    float prog = 1.0f - fminf(p->attackTimer, 180) / 180.0f;
+    gui_ability(SPR_GUI_EXETIORATTACK, !p->isGrounded, prog, 10, 240, prog >= 1);
+    gui_exe_freejump(p, true);
+    prog = 1.0f - v->bringTimer / (float)EXETIOR_BRING_RECHARGE;
+    gui_ability(SPR_GUI_EXETIORRING, 0, prog, 4, 250, prog >= 1 && v->canSpawnRings);
+}
+
 const CharDef CHAR_EXETIOR_DEF = {
+    .draw_gui = draw_gui,
     .name = "exetior",
     .init = init,
     .special = special,

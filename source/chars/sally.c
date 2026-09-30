@@ -300,7 +300,20 @@ static void on_demonize(Player *p)
     v->shieldRechrage = 0;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const SallyVars *v = CHAR_VARS_C(p, SallyVars);
+    int val = p->revivalTimes >= 2 ? SALLY_EATTACK_RECHARGE : SALLY_ATTACK_RECHARGE;
+    float prog = 1.0f - fmaxf(p->attackTimer, 0) / (float)val;
+    gui_ability(SPR_GUI_SALLYATTACK, p->revivalTimes >= 2, prog, 10, 240, prog >= 1 && !p->isGrounded);
+    val = p->revivalTimes >= 2 ? SALLY_ESHIELD_RECHARGE : SALLY_SHIELD_RECHARGE;
+    prog = 1.0f - fmaxf(v->shieldRechrage, 0) / (float)val;
+    gui_ability(SPR_GUI_SALLYSHIELD, p->revivalTimes >= 2, prog, 10, 258, prog >= 1);
+}
+
 const CharDef CHAR_SALLY_DEF = {
+    .draw_gui = draw_gui,
     .on_demonize = on_demonize,
     .name = "sally",
     .init = init,

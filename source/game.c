@@ -1553,6 +1553,9 @@ static void draw_warning(void)
 
 static void draw_level_gui(void)
 {
+    // the local player's Draw_64 + obj_playerui (hp over the head, ability cooldowns)
+    if (level.has_player && !g.escaped && settings.show_hud)
+        player_draw_gui(&level.player, level.cam_x, level.cam_y);
     const Player *me = &level.player;
     if (room_has_overlay(level.room_id) && settings.gfx_overlays) gui_fullscreen(SPR_SCREENOVERLAY, 0, 0.7f);
     // obj_redring_screen

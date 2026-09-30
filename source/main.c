@@ -398,6 +398,7 @@ int main(void)
         if (app_mode == APP_OFFLINE) {
             level_draw();
             mapobj_draw_gui();
+            if (level.has_player && settings.show_hud) player_draw_gui(&level.player, level.cam_x, level.cam_y);
             if (dbg_flag('T')) {  // colour test after sprites
                 ui_text(10, 10, 0.5f, UI_RED, "RED TEXT");
                 ui_text(10, 30, 0.5f, UI_GREEN, "GREEN TEXT");

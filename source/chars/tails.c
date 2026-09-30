@@ -300,7 +300,16 @@ static void on_demonize(Player *p)
     p->flyTimer = -420;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    gui_ability(SPR_GUI_TAILSFLY, p->revivalTimes >= 2, fminf(p->flyTimer, 0) / -420.0f, 10, 240, p->flyTimer <= -420);
+    float prog = 1.0f - p->attackTimer / (float)recharge(p);
+    gui_ability(SPR_GUI_TAILSATTACK, 0, prog, 12, 250, prog >= 1);
+}
+
 const CharDef CHAR_TAILS_DEF = {
+    .draw_gui = draw_gui,
     .on_demonize = on_demonize,
     .name = "tails",
     .init = init,

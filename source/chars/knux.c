@@ -283,7 +283,19 @@ static void on_demonize(Player *p)
     v->glideTimer = 0;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const KnuxVars *v = CHAR_VARS_C(p, KnuxVars);
+    float prog = 1.0f - fminf(v->glideTimer, KNUX_GLIDE_RECHARGE) / (float)KNUX_GLIDE_RECHARGE;
+    gui_ability(SPR_GUI_KNUXGLIDE, p->revivalTimes >= 2, prog, 10, 240, prog >= 1);
+    int val = p->revivalTimes >= 2 ? KNUX_EXEATTACK_RECHARGE : KNUX_ATTACK_RECHARGE;
+    prog = 1.0f - fminf(p->attackTimer, val) / (float)val;
+    gui_ability(SPR_GUI_KNUXATTACK, 0, prog, 10, 258, prog >= 1);
+}
+
 const CharDef CHAR_KNUX_DEF = {
+    .draw_gui = draw_gui,
     .on_demonize = on_demonize,
     .name = "knux",
     .init = init,

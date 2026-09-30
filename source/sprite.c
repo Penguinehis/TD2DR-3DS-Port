@@ -37,8 +37,8 @@ typedef struct PACKED { u8 sheet; u16 x, y, w, h; s16 dx, dy; } PieceRec;
 typedef struct PACKED { s16 x0, y0; u16 cols, rows; u32 first_cell; } MapRec;
 
 typedef struct {
-    C2D_SpriteSheet sheet;  // NULL while not loaded
-    C3D_Tex *tex;
+    C3D_Tex texobj;
+    C3D_Tex *tex;           // &texobj while loaded, else NULL
     u32 last_used;
     bool missing;
 } Sheet;
@@ -147,7 +147,7 @@ void sprites_init(void)
 void sprites_exit(void)
 {
     for (int i = 0; i < all_sheet_count; i++)
-        if (all_sheets[i]->sheet) C2D_SpriteSheetFree(all_sheets[i]->sheet);
+        if (all_sheets[i]->tex) linearFree(all_sheets[i]->tex->data);
     free(blob);
 }
 
@@ -170,7 +170,7 @@ u32 sprites_linear_free(void) { return linearSpaceFree(); }
 int sprites_loaded_sheets(void)
 {
     int n = 0;
-    for (int i = 0; i < all_sheet_count; i++) n += all_sheets[i]->sheet != NULL;
+    for (int i = 0; i < all_sheet_count; i++) n += all_sheets[i]->tex != NULL;
     return n;
 }
 
@@ -196,14 +196,36 @@ static bool evict_one(void)
     Sheet *victim = NULL;
     for (int i = 0; i < all_sheet_count; i++) {
         Sheet *s = all_sheets[i];
-        if (s->sheet && s->last_used < frame_counter && (!victim || s->last_used < victim->last_used))
+        if (s->tex && s->last_used < frame_counter && (!victim || s->last_used < victim->last_used))
             victim = s;
     }
     if (!victim) return false;
-    C2D_SpriteSheetFree(victim->sheet);
-    victim->sheet = NULL;
+    linearFree(victim->tex->data);
     victim->tex = NULL;
     return true;
+}
+
+// Texture memory for a sheet, making room by evicting older sheets (game thread)
+static void *tex_alloc(u32 size)
+{
+    void *m;
+    while (!(m = linearAlloc(size)) && evict_one()) {}
+    return m;
+}
+
+static void sheet_set(Sheet *s, const LoaderTex *t)
+{
+    C3D_Tex *x = &s->texobj;
+    memset(x, 0, sizeof *x);
+    x->data = t->mem;
+    x->fmt = t->format;
+    x->size = t->size;
+    x->width = t->width;
+    x->height = t->height;
+    x->param = GPU_TEXTURE_MODE(GPU_TEX_2D);
+    C3D_TexSetFilter(x, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(x, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    s->tex = x;
 }
 
 static C3D_Tex *sheet_get(int group, bool tiles, int index)
@@ -212,53 +234,23 @@ static C3D_Tex *sheet_get(int group, bool tiles, int index)
     if (index >= (tiles ? g->ntile : g->nsprite)) return NULL;
     Sheet *s = tiles ? &g->tile_sheets[index] : &g->sprite_sheets[index];
     s->last_used = frame_counter;
-    if (s->sheet) return s->tex;
+    if (s->tex) return s->tex;
     if (s->missing) return NULL;
 
     while (linearSpaceFree() < LINEAR_RESERVE && evict_one()) {}
 
     char path[64];
     snprintf(path, sizeof path, "romfs:/gfx/%s_%s%d.t3x", g->name, tiles ? "t" : "", index);
-    if (sync_frames > 0) {
-        s->sheet = C2D_SpriteSheetLoad(path);
-        // Out of linear memory: free older sheets until it fits (a sprite must never vanish
-        // just because the level art filled the memory first).
-        while (!s->sheet && evict_one()) s->sheet = C2D_SpriteSheetLoad(path);
-        if (!s->sheet) {
-            FILE *f = fopen(path, "rb");
-            if (f) fclose(f);
-            else s->missing = true;  // only a file that does not exist is given up on
-            dbg_log("sheet %s: %s", path, f ? "no memory" : "missing");
-            return NULL;
-        }
-    } else {
-        // In play: read in the background (a blocking read freezes the game on hardware);
-        // the sprite shows a frame or two later.
-        // at most one sheet a frame is copied into texture memory (~8 ms each)
-        static u32 last_made;
-        if (last_made == frame_counter) return NULL;
-        void *data;
-        size_t size;
-        int r = loader_fetch(path, &data, &size);
-        if (r == LOADER_READY) last_made = frame_counter;
-        if (r == LOADER_MISSING) s->missing = true;
-        if (r != LOADER_READY) return NULL;
-        u64 t0 = svcGetSystemTick();
-        const u8 *hd = data;
-        size_t head = 5 + 12 * (size_t)(hd[0] | hd[1] << 8);
-        s->sheet = C2D_SpriteSheetLoadFromMem(data, size);
-        dbg_log("async sheet %s: %u bytes, stream type %02x, %.2f ms", path, (unsigned)size, head < size ? hd[head] : 0xFF,
-                (svcGetSystemTick() - t0) / (float)CPU_TICKS_PER_MSEC);
-        while (!s->sheet && evict_one()) s->sheet = C2D_SpriteSheetLoadFromMem(data, size);
-        free(data);
-        if (!s->sheet) {
-            dbg_log("sheet %s: no memory", path);
-            return NULL;
-        }
+    // Level start: at once. In play: read and decompressed in the background, straight into the
+    // texture memory (the game thread only allocates it); the sprite shows a frame or two later.
+    LoaderTex t;
+    int r = sync_frames > 0 ? loader_load_tex_now(path, &t, tex_alloc) : loader_fetch_tex(path, &t, tex_alloc);
+    if (r == LOADER_MISSING) s->missing = true;  // only a file that does not exist is given up on
+    if (r != LOADER_READY) {
+        if (r != LOADER_PENDING) dbg_log("sheet %s: %s", path, r == LOADER_MISSING ? "missing" : "failed");
+        return NULL;
     }
-    C2D_Image img = C2D_SpriteSheetGetImage(s->sheet, 0);
-    s->tex = img.tex;
-    C3D_TexSetFilter(s->tex, GPU_NEAREST, GPU_NEAREST);
+    sheet_set(s, &t);
     return s->tex;
 }
 
@@ -268,11 +260,11 @@ void sprites_flush(void)
 {
     for (int i = 0; i < all_sheet_count; i++) {
         Sheet *s = all_sheets[i];
-        if (!s->sheet) continue;
-        C2D_SpriteSheetFree(s->sheet);
-        s->sheet = NULL;
+        if (!s->tex) continue;
+        linearFree(s->tex->data);
         s->tex = NULL;
     }
+    loader_drop_textures();
 }
 
 void sprite_preload(int spr)
@@ -729,6 +721,26 @@ void sprite_draw_smooth(int spr, float frame, float x, float y, float xscale, fl
     sprites_batch_end();
     smooth_next = false;
     for (int i = 0; i < smooth_count; i++) C3D_TexSetFilter(smooth_tex[i], GPU_NEAREST, GPU_NEAREST);
+}
+
+void sprite_draw_sub(int spr, float frame, float x, float y, int sx0, int sy0, int sx1, int sy1, u32 colour,
+                     float alpha)
+{
+    const SpriteInfo *s = sprite_info(spr);
+    if (!s || s->mode != SPRITE_NORMAL || alpha <= 0) return;
+    int fi = frame_index(s, frame);
+    if (fi < 0) return;
+    const FrameRec *f = &frames[fi];
+    for (u32 i = 0; i < f->count; i++) {
+        const PieceRec *pc = &pieces[f->first + i];
+        int l = pc->dx > sx0 ? pc->dx : sx0, t = pc->dy > sy0 ? pc->dy : sy0;
+        int r = pc->dx + pc->w < sx1 ? pc->dx + pc->w : sx1, b = pc->dy + pc->h < sy1 ? pc->dy + pc->h : sy1;
+        if (r <= l || b <= t) continue;
+        C3D_Tex *tex = sheet_get(s->group, false, pc->sheet);
+        if (!tex) continue;
+        draw_rect(tex, pc->x + (l - pc->dx), pc->y + (t - pc->dy), r - l, b - t, x - s->xorigin + l, y - s->yorigin + t,
+                  0, 0, 1, 1, 0, colour, alpha);
+    }
 }
 
 void sprite_draw_part(int spr, float frame, float x, float y, int src_l, int src_r)

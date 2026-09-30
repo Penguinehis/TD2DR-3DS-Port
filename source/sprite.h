@@ -44,6 +44,9 @@ void sprite_draw_tex(C3D_Tex *tex, int sx, int sy, int sw, int sh, float x, floa
 // Scaled soft images (full-screen vignettes 480x270 -> 400x240): linear filtering, so the
 // uneven nearest-neighbour rows of a non-integer scale do not show
 void sprite_draw_smooth(int spr, float frame, float x, float y, float xscale, float yscale, u32 colour, float alpha);
+// The frame pixels [sx0, sx1) x [sy0, sy1) of a normal sprite, unscaled, the origin at (x, y)
+void sprite_draw_sub(int spr, float frame, float x, float y, int sx0, int sy0, int sx1, int sy1, u32 colour,
+                     float alpha);
 // A tilemap sprite's pixel columns [src_l, src_r) only (multiples of 16), unscaled
 void sprite_draw_part(int spr, float frame, float x, float y, int src_l, int src_r);
 void sprite_draw_tiled(int spr, float frame, float x, float y, bool htile, bool vtile,

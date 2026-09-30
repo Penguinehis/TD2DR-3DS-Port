@@ -23,7 +23,8 @@ typedef struct {
     bool gfx_weather;       // rain, snow and other particle fields
     bool gfx_overlays;      // screen vignette, fog and flash overlays
     bool show_perf;         // frame timings on the bottom screen
-    bool cam_lookahead;     // the camera leads 25% of the screen in the facing direction
+    bool cam_lookahead;
+    bool show_hud;          // ability cooldowns and the hp meter over the head (global.showHud)     // the camera leads 25% of the screen in the facing direction
     u32 bind[BIND_COUNT];   // KEY_* mask per action
     int music_volume;       // 0..10
     int sfx_volume;         // 0..10

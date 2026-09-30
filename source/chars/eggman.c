@@ -233,7 +233,20 @@ static void on_demonize(Player *p)
     v->shieldRechrage = 0;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const EggVars *v = CHAR_VARS_C(p, EggVars);
+    float prog = 1.0f - fmaxf(v->djumpRecharge, 0) / (float)EGGMAN_DJUMP_RECHARGE;
+    gui_ability(SPR_GUI_EGGDJUMP, 0, prog, 10, 222, prog >= 1);
+    prog = 1.0f - fmaxf(v->shieldRechrage, 0) / (float)EGGMAN_SHIELD_RECHARGE;
+    gui_ability(SPR_GUI_EGGSHIELD, 0, prog, 10, 240, prog >= 1);
+    prog = 1.0f - fmaxf(v->trackerRecharge, 0) / (float)EGGMAN_TRACKER_RECHARGE;
+    gui_ability(SPR_GUI_EGGTRACK, 0, prog, 10, 258, v->isColliding && prog >= 1);
+}
+
 const CharDef CHAR_EGGMAN_DEF = {
+    .draw_gui = draw_gui,
     .on_demonize = on_demonize,
     .name = "eggman",
     .init = init,

@@ -322,7 +322,25 @@ static bool hurt_blocked(Player *p, int damage)
 // obj_netclient Step_2 (no per-EXE rule for exeCharacter 3)
 static u8 net_flags(const Player *p) { return p->isAttacking ? NETF_ATTACKING : 0; }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const ExellerVars *v = CHAR_VARS_C(p, ExellerVars);
+    float prog = 1.0f - fminf(p->attackTimer, 180) / 180.0f;
+    gui_ability(SPR_GUI_EXEATTACK, 0, prog, 10, 240, prog >= 1);
+    gui_exe_freejump(p, true);
+    prog = 1.0f - v->cloneTimer / (float)EXELLER_CLONE_RECHARGE;
+    int spr = SPR_GUI_EXELLERCLONE;
+    if ((hidKeysHeld() & (KEY_UP | KEY_DOWN)) && v->cloneCount > 0) {
+        spr = SPR_GUI_EXELLERCLONE2;
+        prog = 1;
+    }
+    if (spr == SPR_GUI_EXELLERCLONE && v->cloneCount >= 2) prog = 0;
+    gui_ability(spr, 0, prog, 4, 250, prog >= 1);
+}
+
 const CharDef CHAR_EXELLER_DEF = {
+    .draw_gui = draw_gui,
     .name = "exeller",
     .init = init,
     .special = special,

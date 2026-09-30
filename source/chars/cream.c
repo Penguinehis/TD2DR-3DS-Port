@@ -310,7 +310,20 @@ static void on_demonize(Player *p)
     v->ringsTimer = 0;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const CreamVars *v = CHAR_VARS_C(p, CreamVars);
+    float prog = 1.0f - fmaxf(p->flyTimer, 0) / (float)CREAM_FLY_RECHARGE;
+    gui_ability(SPR_GUI_CREAMFLY, p->revivalTimes >= 2, prog, 10, 222, prog >= 1);
+    prog = 1.0f - fmaxf(v->dashTimer, 0) / (float)CREAM_DASH_RECHARGE;
+    gui_ability(SPR_GUI_CREAMDASH, 0, prog, 10, 240, prog >= 1);
+    prog = 1.0f - fmaxf(v->ringsTimer, 0) / (float)(p->revivalTimes >= 2 ? ECREAM_RINGS_RECHARGE : CREAM_DASH_RECHARGE);
+    gui_ability(SPR_GUI_CREAMRINGS, p->revivalTimes >= 2, prog, 10, 257, prog >= 1 && !v->isColliding);
+}
+
 const CharDef CHAR_CREAM_DEF = {
+    .draw_gui = draw_gui,
     .on_demonize = on_demonize,
     .name = "cream",
     .init = init,

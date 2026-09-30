@@ -523,8 +523,6 @@ static void draw(const Player *p, float cam_x, float cam_y)
     sprite_draw(p->sprite, p->image_index, floorf(p->x) - cam_x, floorf(p->y) - cam_y, p->image_xscale, 1, angle,
                 0xFFFFFFFF, alpha);
 
-    // Draw_64
-    if (p->isSlow) sprite_draw(SPR_FROZEN, 0, ceilf(p->x - cam_x), ceilf(p->y - cam_y) - 20, 1, 1, 0, 0xFFFFFFFF, 1);
 }
 
 // Alarm_4 (the shared code has already restored CHAOS_ACC / CHAOS_MAXSPEED and isSlow)
@@ -632,7 +630,26 @@ static u8 net_flags(const Player *p)
     return f;
 }
 
+// obj_playerui
+static void draw_gui(const Player *p)
+{
+    const ChaosVars *v = CHAR_VARS_C(p, ChaosVars);
+    if (v->stuckTimer <= 30 / 2) {
+        float prog = v->slimeTimer > 0 ? 0 : 1.0f - fminf(p->attackTimer, 120) / 120.0f;
+        gui_ability(SPR_GUI_CHAOSATTACK, !p->isGrounded, prog, 10, 240, prog >= 1);
+    } else {
+        int frame = 2;
+        if (p->isGrounded && v->stuckDir > 0) frame = 1;
+        if (p->isGrounded && v->stuckDir < 0) frame = 0;
+        gui_ability(SPR_GUI_CHAOSWALLDASH, frame, 1, 10, 240, true);
+    }
+    gui_exe_freejump(p, v->slimeTimer <= 0);
+    float prog = v->slimeTimer > 0 ? 1 : fminf(v->slimeTimer, 0) / -(float)CHAOS_INVIS_RECHARGE;
+    gui_ability(SPR_GUI_CHAOSSLIME, 0, prog, 4, 250, prog >= 1);
+}
+
 const CharDef CHAR_CHAOS_DEF = {
+    .draw_gui = draw_gui,
     .name = "chaos",
     .init = init,
     .special = special,

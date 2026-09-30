@@ -80,6 +80,8 @@ void player_draw(const Player *p, float cam_x, float cam_y);
 
 // scr_player_hurt. With ignore, a hit during invulnerability still knocks the player back.
 void player_hurt(Player *p, int damage, float xpw, float ypw);
+// Draw_64 of the local player: hp over the head, ability cooldowns, emotions hint
+void player_draw_gui(const Player *p, float cam_x, float cam_y);
 // scr_player_hurt with its sound argument (snd_spike, snd_lavahit)
 void player_hurt_snd(Player *p, int damage, float xpw, float ypw, int snd);
 void player_hurt_ex(Player *p, int damage, float xpw, float ypw, bool ignore);
