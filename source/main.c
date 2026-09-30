@@ -230,6 +230,22 @@ static int offline_music(void)
     return -1;
 }
 
+// Practice / viewer walk the 21 playable levels (global.levels order), not every room of the
+// project (the menus, lobby and results rooms are no levels).
+static int level_index(int room)
+{
+    for (int i = 0; i < LEVEL_COUNT; i++)
+        if (LEVELS[i].room == room) return i;
+    return -1;
+}
+
+static int step_level(int room, int dir)
+{
+    int i = level_index(room);
+    if (i < 0) return LEVELS[0].room;
+    return LEVELS[(i + dir + LEVEL_COUNT) % LEVEL_COUNT].room;
+}
+
 static void offline_update(u32 held, u32 down, u32 frame_no)
 {
     if (down & KEY_START) {
@@ -243,9 +259,9 @@ static void offline_update(u32 held, u32 down, u32 frame_no)
     int next = (held & KEY_SELECT) && (down & KEY_R) ? 1 : (held & KEY_SELECT) && (down & KEY_L) ? -1 : 0;
     // test: Z<n> goes to the next room every n frames, once round all of them
     int zp = dbg_num('Z', 0);
-    if (zp > 0 && frame_no > 0 && frame_no % zp == 0 && frame_no <= (u32)(zp * RM_COUNT)) next = 1;
+    if (zp > 0 && frame_no > 0 && frame_no % zp == 0 && frame_no <= (u32)(zp * LEVEL_COUNT)) next = 1;
     if (next) {
-        level_load((level.room_id + RM_COUNT + next) % RM_COUNT, -1);
+        level_load(step_level(level.room_id, next), -1);
         const RoomInstance *sp = room_instance_find(&level.room, OBJ_SPAWNPOINT, 0);
         if (spawn >= 0 && sp) level_spawn(spawn, spawn_exe, sp->x, sp->y - 18);
         held = down = 0;
@@ -262,7 +278,9 @@ static void offline_update(u32 held, u32 down, u32 frame_no)
 static void offline_draw_bottom(void)
 {
     const Player *p = &level.player;
-    ui_text(8, 8, 0.6f, UI_WHITE, "%s  (%d/%d)", room_name(level.room_id), level.room_id + 1, RM_COUNT);
+    int li = level_index(level.room_id);
+    if (li >= 0) ui_text(8, 8, 0.6f, UI_WHITE, "%s  (%d/%d)", LEVELS[li].name, li + 1, LEVEL_COUNT);
+    else ui_text(8, 8, 0.6f, UI_WHITE, "%s", room_name(level.room_id));
     ui_text(8, 28, 0.5f, UI_WHITE, "%lux%lu  %d layers  %d objects", level.room.width, level.room.height,
             level.room.layer_count, level_count_instances());
     ui_text(8, 44, 0.5f, UI_WHITE, "camera %.0f, %.0f", level.cam_x, level.cam_y);
